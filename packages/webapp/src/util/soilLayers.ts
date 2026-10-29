@@ -58,16 +58,20 @@ const HUTTON_LCA_BASE =
 const SOILGRIDS_ATTRIBUTION = 'SoilGrids, ISRIC – World Soil Information (CC BY 4.0)';
 const HUTTON_ATTRIBUTION = 'The James Hutton Institute (Hutton Open Data Licence)';
 
-const soilGrids = (property: string, labelKey: string, wmsLayer: string): SoilLayer => ({
-  id: `soilgrids-${property}`,
-  labelKey,
-  region: 'global',
-  baseUrl: `${SOILGRIDS_BASE}?map=/map/${property}.map`,
-  wmsLayers: wmsLayer,
-  attribution: SOILGRIDS_ATTRIBUTION,
-  // SoilGrids is 250 m: tiles beyond this zoom only get blurrier.
-  maxZoom: 12,
-});
+const soilGrids = (property: string, labelKey: string, wmsLayer: string): SoilLayer => {
+  const url = new URL(SOILGRIDS_BASE);
+  url.searchParams.set('map', `/map/${property}.map`);
+  return {
+    id: `soilgrids-${property}`,
+    labelKey,
+    region: 'global',
+    baseUrl: url.toString(),
+    wmsLayers: wmsLayer,
+    attribution: SOILGRIDS_ATTRIBUTION,
+    // SoilGrids is 250 m: tiles beyond this zoom only get blurrier.
+    maxZoom: 12,
+  };
+};
 
 export const SOIL_LAYERS: SoilLayer[] = [
   soilGrids('phh2o', 'PH', 'phh2o_0-5cm_mean'),
@@ -98,7 +102,7 @@ export const SOIL_LAYERS: SoilLayer[] = [
     labelKey: 'HUTTON_LCA',
     region: 'scotland',
     baseUrl: HUTTON_LCA_BASE,
-    wmsLayers: '0',
+    wmsLayers: 'LCA_250K15295',
     attribution: HUTTON_ATTRIBUTION,
     maxZoom: 15,
   },
