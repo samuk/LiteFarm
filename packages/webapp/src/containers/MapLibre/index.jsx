@@ -100,6 +100,7 @@ import {
   summarisePlan,
   validateSettings,
 } from '../../util/rowPlanner';
+import { useGetFieldRowPlanQuery, useImportRowPlanMutation } from '../../store/api/rowPlanApi';
 import useRowPlan from './useRowPlan';
 import RowPlannerControl from '../../components/Map/RowPlannerControl';
 
@@ -162,6 +163,9 @@ export default function MapLibreMap({ isCompactSideMenu }) {
   const [planStatus, setPlanStatus] = useState('');
   const [planErrorKey, setPlanErrorKey] = useState(null);
   const [planErrorMessage, setPlanErrorMessage] = useState(null);
+  // Keyed by the plan it belongs to, so replanning or clearing drops the saved state and any error.
+  const [save, setSave] = useState({ plan: null, error: null, warnings: [] });
+  const [importRowPlan, { isLoading: planSaving }] = useImportRowPlanMutation();
   const plannerRef = useRef(null);
   const planTokenRef = useRef(0);
 
@@ -283,7 +287,29 @@ export default function MapLibreMap({ isCompactSideMenu }) {
     [plan],
   );
   const planSummary = useMemo(() => (plan ? summarisePlan(plan.result) : null), [plan]);
-  useRowPlan({ map: mapReady ? mapRef.current : null, collection: planCollection });
+  // The saved plan for the field, shown until a new plan is made. Always refetched so a plan
+  // saved earlier (or superseded elsewhere) is never served from a stale cache.
+  const { data: savedPlan, refetch: refetchSavedPlan } = useGetFieldRowPlanQuery(
+    { farm_id, location_id: planField?.id },
+    {
+      skip: !farm_id || !planField?.id || isOffline,
+      refetchOnMountOrArgChange: true,
+    },
+  );
+  const savedCollection = useMemo(
+    () =>
+      Array.isArray(savedPlan?.features)
+        ? {
+            type: 'FeatureCollection',
+            features: savedPlan.features.filter((f) => f.properties?.role === 'row'),
+          }
+        : null,
+    [savedPlan],
+  );
+  useRowPlan({
+    map: mapReady ? mapRef.current : null,
+    collection: planCollection ?? savedCollection,
+  });
   useEffect(() => () => plannerRef.current?.terminate(), []);
 
   const handlePlanFieldChange = (id) => {
@@ -348,6 +374,27 @@ export default function MapLibreMap({ isCompactSideMenu }) {
     if (!plan) return;
     const geojson = buildDownloadGeoJSON(plan.request, plan.result);
     saveAs(new Blob([JSON.stringify(geojson)], { type: 'application/geo+json' }), 'swaths.geojson');
+  };
+
+  const handleSavePlan = async () => {
+    if (!plan || !planField || planSaving) return;
+    const saving = plan;
+    setSave({ plan: saving, error: null, warnings: [] });
+    try {
+      const saved = await importRowPlan({
+        farm_id,
+        location_id: planField.id,
+        geojson: buildDownloadGeoJSON(saving.request, saving.result),
+      }).unwrap();
+      setSave({ plan: saving, saved: true, error: null, warnings: saved.warnings ?? [] });
+      refetchSavedPlan();
+    } catch (error) {
+      setSave({
+        plan: saving,
+        error: error?.data?.error ?? error?.error ?? error?.message ?? String(error),
+        warnings: [],
+      });
+    }
   };
 
   // Create the map once.
@@ -691,6 +738,10 @@ export default function MapLibreMap({ isCompactSideMenu }) {
               errorKey={planErrorKey}
               errorMessage={planErrorMessage}
               hasPlan={!!plan}
+              isSaving={planSaving}
+              isSaved={!!plan && save.plan === plan && !!save.saved}
+              saveError={save.plan === plan ? save.error : null}
+              saveWarnings={save.plan === plan ? save.warnings : []}
               onFieldChange={handlePlanFieldChange}
               onSettingsChange={handlePlanSettingsChange}
               onSurveyFile={handleSurveyFile}
@@ -701,6 +752,7 @@ export default function MapLibreMap({ isCompactSideMenu }) {
                 setPlanErrorMessage(null);
               }}
               onDownload={handleDownloadPlan}
+              onSave={handleSavePlan}
             />
           )}
           {drawingState.type && (
