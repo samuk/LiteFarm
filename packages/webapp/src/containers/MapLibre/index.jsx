@@ -104,6 +104,8 @@ import { useGetFieldRowPlanQuery, useImportRowPlanMutation } from '../../store/a
 import useRowPlan from './useRowPlan';
 import RowPlannerControl from '../../components/Map/RowPlannerControl';
 
+// Matches the API's 5 MB body limit on /row_plan.
+const MAX_PLAN_FILE_BYTES = 5_000_000;
 const FALLBACK_COLOUR = '#666666';
 const AREA_TYPES_WITH_FILL = Object.keys(areaStyles);
 const LINE_TYPES = Object.keys(lineStyles);
@@ -166,6 +168,9 @@ export default function MapLibreMap({ isCompactSideMenu }) {
   // Keyed by the plan it belongs to, so replanning or clearing drops the saved state and any error.
   const [save, setSave] = useState({ plan: null, error: null, warnings: [] });
   const [importRowPlan, { isLoading: planSaving }] = useImportRowPlanMutation();
+  // A separate hook instance so an import does not show as a save in progress.
+  const [importPlanFile, { isLoading: planImporting }] = useImportRowPlanMutation();
+  const [importResult, setImportResult] = useState(null);
   const plannerRef = useRef(null);
   const planTokenRef = useRef(0);
 
@@ -315,6 +320,7 @@ export default function MapLibreMap({ isCompactSideMenu }) {
   const handlePlanFieldChange = (id) => {
     setPlanFieldId(id);
     setPlan(null);
+    setImportResult(null);
     setPlanErrorKey(null);
     setPlanErrorMessage(null);
   };
@@ -340,6 +346,7 @@ export default function MapLibreMap({ isCompactSideMenu }) {
 
   const handlePlan = async () => {
     if (!planField) return;
+    setImportResult(null);
     const errorKey = validateSettings(planSettings, survey.count);
     setPlanErrorKey(errorKey);
     setPlanErrorMessage(null);
@@ -374,6 +381,41 @@ export default function MapLibreMap({ isCompactSideMenu }) {
     if (!plan) return;
     const geojson = buildDownloadGeoJSON(plan.request, plan.result);
     saveAs(new Blob([JSON.stringify(geojson)], { type: 'application/geo+json' }), 'swaths.geojson');
+  };
+
+  // Imports a rows/swaths GeoJSON file into the selected field. The API validates it and rejects
+  // robot plans that do not match their hash or lie outside the field.
+  const handleImportFile = async (file) => {
+    if (!file || !planField || planImporting) return;
+    setPlanErrorKey(null);
+    setPlanErrorMessage(null);
+    setImportResult(null);
+    if (file.size > MAX_PLAN_FILE_BYTES) return setPlanErrorKey('IMPORT_TOO_LARGE');
+    let geojson;
+    try {
+      geojson = JSON.parse(await file.text());
+    } catch {
+      return setPlanErrorKey('IMPORT_NOT_JSON');
+    }
+    try {
+      const imported = await importPlanFile({
+        farm_id,
+        location_id: planField.id,
+        geojson,
+      }).unwrap();
+      // Drop any unsaved plan so the imported one is what the map shows.
+      setPlan(null);
+      setImportResult({
+        saved: true,
+        rowCount: imported.row_count,
+        warnings: imported.warnings ?? [],
+      });
+      refetchSavedPlan();
+    } catch (error) {
+      setImportResult({
+        error: error?.data?.error ?? error?.error ?? error?.message ?? String(error),
+      });
+    }
   };
 
   const handleSavePlan = async () => {
@@ -753,6 +795,9 @@ export default function MapLibreMap({ isCompactSideMenu }) {
               }}
               onDownload={handleDownloadPlan}
               onSave={handleSavePlan}
+              isImporting={planImporting}
+              importResult={importResult}
+              onImportFile={handleImportFile}
             />
           )}
           {drawingState.type && (

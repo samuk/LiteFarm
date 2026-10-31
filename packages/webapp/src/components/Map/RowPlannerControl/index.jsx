@@ -33,6 +33,8 @@ export default function RowPlannerControl({
   isSaved,
   saveError,
   saveWarnings,
+  isImporting,
+  importResult,
   onFieldChange,
   onSettingsChange,
   onSurveyFile,
@@ -40,11 +42,13 @@ export default function RowPlannerControl({
   onClear,
   onDownload,
   onSave,
+  onImportFile,
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const prefix = 'FARM_MAP.ROW_PLANNER.';
   const set = (key, value) => onSettingsChange({ ...settings, [key]: value });
+  const locked = isBusy || isImporting;
 
   const numberInput = (key, labelKey, props) => (
     <label className={styles.field}>
@@ -80,7 +84,7 @@ export default function RowPlannerControl({
                 {t(prefix + 'FIELD')}
                 <select
                   value={fieldId ?? ''}
-                  disabled={isBusy}
+                  disabled={locked}
                   onChange={(event) => onFieldChange(event.target.value)}
                 >
                   {fields.map((field) => (
@@ -131,7 +135,7 @@ export default function RowPlannerControl({
                 </>
               )}
               <div className={styles.actions}>
-                <button type="button" className={styles.button} disabled={isBusy} onClick={onPlan}>
+                <button type="button" className={styles.button} disabled={locked} onClick={onPlan}>
                   {isBusy ? t(prefix + 'PLANNING') : t(prefix + 'PLAN')}
                 </button>
                 <button
@@ -153,7 +157,7 @@ export default function RowPlannerControl({
                 <button
                   type="button"
                   className={styles.button}
-                  disabled={isBusy || isSaving || isSaved || !hasPlan}
+                  disabled={isBusy || isSaving || isImporting || isSaved || !hasPlan}
                   onClick={onSave}
                 >
                   {isSaving
@@ -163,6 +167,40 @@ export default function RowPlannerControl({
                       : t(prefix + 'SAVE')}
                 </button>
               </div>
+              <label className={styles.field}>
+                {t(prefix + 'IMPORT')}
+                <input
+                  type="file"
+                  accept=".geojson,.json,application/geo+json,application/json"
+                  disabled={locked || isSaving || !fieldId}
+                  onChange={(event) => {
+                    const file = event.target.files?.[0] ?? null;
+                    // Clear the input so choosing the same file again still fires onChange.
+                    event.target.value = '';
+                    if (file) onImportFile(file);
+                  }}
+                />
+              </label>
+              {isImporting && (
+                <p className={styles.result} role="status">
+                  {t(prefix + 'IMPORTING')}
+                </p>
+              )}
+              {importResult?.error && (
+                <p className={styles.error} role="alert">
+                  {t(prefix + 'IMPORT_FAILED', { message: importResult.error })}
+                </p>
+              )}
+              {importResult?.saved && (
+                <p className={styles.result} role="status">
+                  {importResult.rowCount == null
+                    ? t(prefix + 'IMPORT_EXISTS')
+                    : t(prefix + 'IMPORTED', { count: importResult.rowCount })}
+                  {importResult.warnings?.length > 0 &&
+                    '\n' +
+                      t(prefix + 'IMPORT_WARNINGS', { message: importResult.warnings.join('; ') })}
+                </p>
+              )}
               {isBusy && statusKey && (
                 <p className={styles.result} role="status">
                   {t(prefix + 'STATUS.' + statusKey)}
@@ -235,6 +273,13 @@ RowPlannerControl.propTypes = {
   isSaved: PropTypes.bool,
   saveError: PropTypes.string,
   saveWarnings: PropTypes.arrayOf(PropTypes.string),
+  isImporting: PropTypes.bool,
+  importResult: PropTypes.shape({
+    saved: PropTypes.bool,
+    error: PropTypes.string,
+    rowCount: PropTypes.number,
+    warnings: PropTypes.arrayOf(PropTypes.string),
+  }),
   onFieldChange: PropTypes.func.isRequired,
   onSettingsChange: PropTypes.func.isRequired,
   onSurveyFile: PropTypes.func.isRequired,
@@ -242,4 +287,5 @@ RowPlannerControl.propTypes = {
   onClear: PropTypes.func.isRequired,
   onDownload: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
+  onImportFile: PropTypes.func.isRequired,
 };
