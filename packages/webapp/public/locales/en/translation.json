@@ -2434,7 +2434,7 @@
     "ROWS": {
       "ABORTED": "{{count}} aborted",
       "DONE": "{{count}} done",
-      "EMPTY": "Enter the rows to work, for example 12-18,21",
+      "EMPTY": "Select the rows to work",
       "ERRORS": {
         "BACKWARDS": "\"{{part}}\" runs backwards",
         "EMPTY": "Enter at least one row",

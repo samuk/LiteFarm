@@ -149,7 +149,10 @@ export const CheckboxMultiSelect = ({
     const sorted = [...options].sort((a, b) => {
       const isSelected = (option: SelectOption) =>
         value.some((item) => item.label === option.label);
-      return Number(isSelected(b)) - Number(isSelected(a)) || a.label?.localeCompare(b.label);
+      return (
+        Number(isSelected(b)) - Number(isSelected(a)) ||
+        a.label?.localeCompare(b.label, undefined, { numeric: true })
+      );
     });
     return sorted;
   }, [options, value]);

@@ -43,8 +43,13 @@ const setup = (props = {}) => {
       {...props}
     />,
   );
-  return { onSave, input: screen.queryByRole('textbox') as HTMLInputElement | null };
+  return { onSave };
 };
+
+const openMenu = () => fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+const toggle = (n: number) => fireEvent.click(screen.getByText(String(n)));
+const saveButton = () =>
+  screen.getByRole('button', { name: 'TASK.ROWS.SAVE' }) as HTMLButtonElement;
 
 afterEach(cleanup);
 
@@ -53,45 +58,58 @@ describe('PureTaskRows', () => {
     setup({ rows: [row(12), row(13), row(14), row(15), row(21)], canEdit: false });
     expect(screen.getByText(/TASK\.ROWS\.SUMMARY/).textContent).toContain('"rows":"12-15,21"');
     expect(screen.getByText(/TASK\.ROWS\.SUMMARY/).textContent).toContain('"count":5');
-    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
   });
 
-  it('saves the rows that were typed', () => {
-    const { onSave, input } = setup();
-    fireEvent.change(input!, { target: { value: '12-14,21' } });
-    fireEvent.click(screen.getByRole('button', { name: 'TASK.ROWS.SAVE' }));
+  it('offers the rows of the plan in numeric order', () => {
+    setup();
+    openMenu();
+    const labels = screen.getAllByRole('option').map((option) => option.textContent);
+    expect(labels.slice(0, 3)).toEqual(['1', '2', '3']);
+    expect(labels.indexOf('2')).toBeLessThan(labels.indexOf('10'));
+  });
+
+  it('saves the rows that were picked from the dropdown', () => {
+    const { onSave } = setup();
+    openMenu();
+    [21, 12, 14, 13].forEach(toggle);
+    fireEvent.click(saveButton());
     expect(onSave).toHaveBeenCalledWith([12, 13, 14, 21]);
   });
 
-  it('does not save text it cannot read', () => {
-    const { onSave, input } = setup();
-    fireEvent.change(input!, { target: { value: '12-x' } });
-    fireEvent.click(screen.getByRole('button', { name: 'TASK.ROWS.SAVE' }));
+  it('does not save an empty selection', () => {
+    const { onSave } = setup({ rows: [row(1)] });
+    openMenu();
+    toggle(1);
+    fireEvent.click(saveButton());
     expect(onSave).not.toHaveBeenCalled();
-    expect(screen.getByText(/TASK\.ROWS\.ERRORS\.UNREADABLE/)).toBeTruthy();
+    expect(screen.getByText('TASK.ROWS.ERRORS.EMPTY')).toBeTruthy();
   });
 
-  it('does not save rows that are not in the plan', () => {
-    const { onSave, input } = setup();
-    fireEvent.change(input!, { target: { value: '28-33' } });
-    fireEvent.click(screen.getByRole('button', { name: 'TASK.ROWS.SAVE' }));
+  it('does not save rows that are no longer in the plan', () => {
+    const { onSave } = setup({ rows: [row(40)] });
+    openMenu();
+    toggle(2);
+    fireEvent.click(saveButton());
     expect(onSave).not.toHaveBeenCalled();
     expect(screen.getByText(/TASK\.ROWS\.ERRORS\.NOT_IN_PLAN/).textContent).toContain(
-      '"rows":"31-33"',
+      '"rows":"40"',
     );
   });
 
   it('keeps the save button off until the rows change', () => {
     setup({ rows: [row(1)] });
-    const save = screen.getByRole('button', { name: 'TASK.ROWS.SAVE' }) as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: '1-2' } });
-    expect(save.disabled).toBe(false);
+    expect(saveButton().disabled).toBe(true);
+    openMenu();
+    toggle(2);
+    expect(saveButton().disabled).toBe(false);
+    toggle(2);
+    expect(saveButton().disabled).toBe(true);
   });
 
   it('locks the rows once any has a result', () => {
     setup({ rows: [row(1, 'done'), row(2)] });
-    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
     expect(screen.getByText('TASK.ROWS.LOCKED')).toBeTruthy();
     expect(screen.getByText(/TASK\.ROWS\.DONE/).textContent).toContain('"count":1');
   });

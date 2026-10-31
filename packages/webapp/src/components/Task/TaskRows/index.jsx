@@ -14,18 +14,12 @@
  */
 
 import PropTypes from 'prop-types';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import Button from '../../Form/Button';
-import Input from '../../Form/Input';
-import { Semibold, Text } from '../../Typography';
-import {
-  RowSpecError,
-  countRowStatuses,
-  formatRowSpec,
-  hasRowResults,
-  parseRowSpec,
-} from '../../../util/taskRows';
+import { CheckboxMultiSelect } from '../../Form/ReactSelect/CheckboxMultiSelect';
+import { Error, Label, Semibold, Text } from '../../Typography';
+import { countRowStatuses, formatRowSpec, hasRowResults } from '../../../util/taskRows';
 import styles from './styles.module.scss';
 
 const MAX_LISTED_MISSING = 5;
@@ -41,37 +35,49 @@ export default function PureTaskRows({
   const { t } = useTranslation();
   const prefix = 'TASK.ROWS.';
   const current = [...new Set(rows.map((row) => row.row_number))].sort((a, b) => a - b);
-  const [text, setText] = useState(formatRowSpec(current));
-  const [error, setError] = useState('');
   const currentSpec = formatRowSpec(current);
+  const [selected, setSelected] = useState(current);
+  const [error, setError] = useState('');
 
   // Show what the task has once it loads or the saved rows change.
   useEffect(() => {
-    setText(currentSpec);
+    setSelected(current);
     setError('');
+    // `current` is rebuilt every render, so key the reset on its text form.
   }, [currentSpec]);
+
+  // Every row in the plan, plus any saved row the plan no longer has, so it stays visible.
+  const options = useMemo(
+    () =>
+      [...new Set([...planRowNumbers, ...current])]
+        .sort((a, b) => a - b)
+        .map((n) => ({ value: n, label: String(n) })),
+    [planRowNumbers, currentSpec],
+  );
 
   const locked = hasRowResults(rows);
   const counts = countRowStatuses(rows);
+  const selectedSpec = formatRowSpec(selected);
+
+  const handleChange = (values) => {
+    setSelected(values.map((option) => option.value));
+    setError('');
+  };
 
   const handleSave = () => {
-    let numbers;
-    try {
-      numbers = parseRowSpec(text);
-    } catch (e) {
-      if (!(e instanceof RowSpecError)) throw e;
-      setError(t(`${prefix}ERRORS.${e.code}`, { part: e.part }));
+    if (!selected.length) {
+      setError(t(`${prefix}ERRORS.EMPTY`));
       return;
     }
     const inPlan = new Set(planRowNumbers);
-    const missing = numbers.filter((n) => !inPlan.has(n));
+    const missing = selected.filter((n) => !inPlan.has(n));
     if (missing.length) {
       const listed = formatRowSpec(missing.slice(0, MAX_LISTED_MISSING));
       setError(t(`${prefix}ERRORS.NOT_IN_PLAN`, { rows: listed }));
       return;
     }
     setError('');
-    onSave(numbers);
+    onSave([...selected].sort((a, b) => a - b));
   };
 
   return (
@@ -94,18 +100,23 @@ export default function PureTaskRows({
       {canEdit && locked && <Text className={styles.note}>{t(`${prefix}LOCKED`)}</Text>}
       {canEdit && !locked && (
         <div className={styles.editor}>
-          <Input
-            label={t(`${prefix}INPUT_LABEL`)}
-            placeholder={t(`${prefix}EMPTY`)}
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            errors={error || (saveError ? t(`${prefix}ERRORS.SAVE_FAILED`) : undefined)}
-            disabled={isSaving}
-          />
+          <div className={styles.select}>
+            <Label>{t(`${prefix}INPUT_LABEL`)}</Label>
+            <CheckboxMultiSelect
+              options={options}
+              value={options.filter((option) => selected.includes(option.value))}
+              onChange={handleChange}
+              placeholder={t(`${prefix}EMPTY`)}
+              isDisabled={isSaving}
+            />
+            {(error || saveError) && (
+              <Error role="alert">{error || t(`${prefix}ERRORS.SAVE_FAILED`)}</Error>
+            )}
+          </div>
           <Button
             color="secondary"
             sm
-            disabled={isSaving || text.trim() === currentSpec}
+            disabled={isSaving || selectedSpec === currentSpec}
             onClick={handleSave}
           >
             {t(`${prefix}SAVE`)}

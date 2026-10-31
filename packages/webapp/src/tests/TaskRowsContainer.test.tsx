@@ -53,12 +53,13 @@ describe('TaskRows reads', () => {
     const { rerender } = render(<TaskRows task={task} canEdit />);
     expect(screen.getByRole('status').textContent).toBe('TASK.ROWS.LOADING');
     expect(screen.queryByText('TASK.ROWS.NONE')).toBeNull();
-    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
 
     hooks.getRows.mockReturnValue({ currentData: [], isSuccess: true });
     rerender(<TaskRows task={task} canEdit />);
     expect(screen.getByText('TASK.ROWS.NONE')).toBeTruthy();
-    fireEvent.change(screen.getByRole('textbox'), { target: { value: '1' } });
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'ArrowDown' });
+    fireEvent.click(screen.getByText('1'));
     fireEvent.click(screen.getByRole('button', { name: 'TASK.ROWS.SAVE' }));
     expect(hooks.setRows).toHaveBeenCalledWith({
       task_id: 1,
@@ -76,19 +77,19 @@ describe('TaskRows reads', () => {
     render(<TaskRows task={task} canEdit />);
     expect(screen.getByRole('alert').textContent).toBe('TASK.ROWS.ERRORS.READ_FAILED');
     expect(screen.queryByText('TASK.ROWS.NONE')).toBeNull();
-    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
   });
 
   it('blocks editing while refetching or waiting for the current task data', () => {
     hooks.getRows.mockReturnValue({ currentData: [], isSuccess: true, isFetching: true });
     const { rerender } = render(<TaskRows task={task} canEdit />);
     expect(screen.getByRole('status')).toBeTruthy();
-    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
 
     hooks.getRows.mockReturnValue({ isSuccess: true, data: [] });
     rerender(<TaskRows task={{ ...task, task_id: 2 }} canEdit />);
     expect(screen.getByRole('status')).toBeTruthy();
-    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
   });
 
   it('continues to lock rows with results after a successful read', () => {
@@ -98,6 +99,6 @@ describe('TaskRows reads', () => {
     });
     render(<TaskRows task={task} canEdit />);
     expect(screen.getByText('TASK.ROWS.LOCKED')).toBeTruthy();
-    expect(screen.queryByRole('textbox')).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
   });
 });

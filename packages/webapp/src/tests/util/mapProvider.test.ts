@@ -49,6 +49,7 @@ describe('map provider configuration', () => {
     const { buildImageryStyle } = await import('../../util/mapProvider');
     expect(buildImageryStyle()).toEqual({
       version: 8,
+      glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
       sources: {
         imagery: {
           type: 'raster',
