@@ -16,7 +16,6 @@
 import { renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import useRowPlan, {
-  ROW_PLAN_LABELS_LAYER_ID,
   ROW_PLAN_PATH_LAYER_ID,
   ROW_PLAN_ROWS_LAYER_ID,
   ROW_PLAN_SOURCE_ID,
@@ -67,26 +66,10 @@ describe('useRowPlan', () => {
     expect(map.layers.has(ROW_PLAN_ROWS_LAYER_ID)).toBe(true);
     expect(map.layers.has(ROW_PLAN_PATH_LAYER_ID)).toBe(false);
   });
-  it('labels each row with its number, above the rows and the path', () => {
-    const map = makeMap();
-    renderHook(() => useRowPlan({ map, collection: collection('row', 'path') }));
-    const labels = map.addLayer.mock.calls
-      .map(([layer]) => layer)
-      .find((layer) => layer.id === ROW_PLAN_LABELS_LAYER_ID);
-    expect(labels.type).toBe('symbol');
-    expect(labels.layout['text-field']).toEqual(['to-string', ['get', 'row']]);
-    expect(labels.layout['symbol-placement']).toBe('line-center');
-    expect(labels.filter).toEqual(['==', ['get', 'role'], 'row']);
-    expect([...map.layers].pop()).toBe(ROW_PLAN_LABELS_LAYER_ID);
-  });
   it('adds the path layer above the rows when there is a path', () => {
     const map = makeMap();
     renderHook(() => useRowPlan({ map, collection: collection('row', 'path') }));
-    expect([...map.layers]).toEqual([
-      ROW_PLAN_ROWS_LAYER_ID,
-      ROW_PLAN_PATH_LAYER_ID,
-      ROW_PLAN_LABELS_LAYER_ID,
-    ]);
+    expect([...map.layers]).toEqual([ROW_PLAN_ROWS_LAYER_ID, ROW_PLAN_PATH_LAYER_ID]);
   });
   it('replaces the plan when the collection changes and removes it on null and unmount', () => {
     const map = makeMap();
@@ -94,7 +77,7 @@ describe('useRowPlan', () => {
       initialProps: { c: collection('row', 'path') as any },
     });
     rerender({ c: collection('row') });
-    expect([...map.layers]).toEqual([ROW_PLAN_ROWS_LAYER_ID, ROW_PLAN_LABELS_LAYER_ID]);
+    expect([...map.layers]).toEqual([ROW_PLAN_ROWS_LAYER_ID]);
     rerender({ c: null });
     expect(map.layers.size).toBe(0);
     expect(map.sources.size).toBe(0);

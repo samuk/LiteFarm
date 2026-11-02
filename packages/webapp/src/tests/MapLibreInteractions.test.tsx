@@ -358,65 +358,6 @@ describe('MapLibre farm map', () => {
     await waitFor(() => expect(save().disabled).toBe(false));
   });
 
-  it('imports a GeoJSON file into the selected field and refetches the saved plan', async () => {
-    harness.importRowPlan.mockResolvedValue({
-      row_plan: {},
-      row_count: 4,
-      warnings: ['one row is outside'],
-    });
-    harness.internal.locations = { area: { field: [field] } };
-    render(<MapLibreMap isCompactSideMenu={false} />);
-    loadMap();
-    fireEvent.click(screen.getByText('FARM_MAP.ROW_PLANNER.TITLE'));
-    const geojson = { type: 'FeatureCollection', properties: { version: 1 }, features: [] };
-    const input = screen.getByLabelText('FARM_MAP.ROW_PLANNER.IMPORT');
-    fireEvent.change(input, {
-      target: { files: [new File([JSON.stringify(geojson)], 'rows.geojson')] },
-    });
-    await waitFor(() => expect(screen.getByText(/FARM_MAP\.ROW_PLANNER\.IMPORTED/)).toBeTruthy());
-    expect(harness.importRowPlan).toHaveBeenCalledTimes(1);
-    const args = harness.importRowPlan.mock.calls[0][0];
-    expect(args.farm_id).toBe('farm');
-    expect(args.location_id).toBe(field.location_id);
-    expect(args.geojson).toEqual(geojson);
-    expect(screen.getByText(/FARM_MAP\.ROW_PLANNER\.IMPORT_WARNINGS/)).toBeTruthy();
-    await waitFor(() => expect(harness.refetchSavedPlan).toHaveBeenCalledTimes(1));
-  });
-
-  it('shows the API error when an import is rejected', async () => {
-    harness.importRowPlan.mockRejectedValue({ data: { error: 'no rows in plan' } });
-    harness.internal.locations = { area: { field: [field] } };
-    render(<MapLibreMap isCompactSideMenu={false} />);
-    loadMap();
-    fireEvent.click(screen.getByText('FARM_MAP.ROW_PLANNER.TITLE'));
-    fireEvent.change(screen.getByLabelText('FARM_MAP.ROW_PLANNER.IMPORT'), {
-      target: { files: [new File(['{}'], 'rows.geojson')] },
-    });
-    await waitFor(() =>
-      expect(screen.getByText('FARM_MAP.ROW_PLANNER.IMPORT_FAILED')).toBeTruthy(),
-    );
-    expect(harness.refetchSavedPlan).not.toHaveBeenCalled();
-  });
-
-  it('does not call the API for a file that is not JSON or is too large', async () => {
-    harness.internal.locations = { area: { field: [field] } };
-    render(<MapLibreMap isCompactSideMenu={false} />);
-    loadMap();
-    fireEvent.click(screen.getByText('FARM_MAP.ROW_PLANNER.TITLE'));
-    const input = screen.getByLabelText('FARM_MAP.ROW_PLANNER.IMPORT');
-    fireEvent.change(input, { target: { files: [new File(['not json'], 'rows.geojson')] } });
-    await waitFor(() =>
-      expect(screen.getByText('FARM_MAP.ROW_PLANNER.ERRORS.IMPORT_NOT_JSON')).toBeTruthy(),
-    );
-    const big = new File(['{}'], 'big.geojson');
-    Object.defineProperty(big, 'size', { value: 5_000_001 });
-    fireEvent.change(input, { target: { files: [big] } });
-    await waitFor(() =>
-      expect(screen.getByText('FARM_MAP.ROW_PLANNER.ERRORS.IMPORT_TOO_LARGE')).toBeTruthy(),
-    );
-    expect(harness.importRowPlan).not.toHaveBeenCalled();
-  });
-
   it('draws the saved plan of the field on load, without planning again', () => {
     harness.internal.locations = { area: { field: [field] } };
     harness.savedPlan = {

@@ -42,13 +42,11 @@ export default function RowPlannerControl({
   onClear,
   onDownload,
   onSave,
-  onImportFile,
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const prefix = 'FARM_MAP.ROW_PLANNER.';
   const set = (key, value) => onSettingsChange({ ...settings, [key]: value });
-  const locked = isBusy || isImporting;
 
   const numberInput = (key, labelKey, props) => (
     <label className={styles.field}>
@@ -84,7 +82,7 @@ export default function RowPlannerControl({
                 {t(prefix + 'FIELD')}
                 <select
                   value={fieldId ?? ''}
-                  disabled={locked}
+                  disabled={isBusy}
                   onChange={(event) => onFieldChange(event.target.value)}
                 >
                   {fields.map((field) => (
@@ -135,7 +133,7 @@ export default function RowPlannerControl({
                 </>
               )}
               <div className={styles.actions}>
-                <button type="button" className={styles.button} disabled={locked} onClick={onPlan}>
+                <button type="button" className={styles.button} disabled={isBusy} onClick={onPlan}>
                   {isBusy ? t(prefix + 'PLANNING') : t(prefix + 'PLAN')}
                 </button>
                 <button
@@ -157,7 +155,7 @@ export default function RowPlannerControl({
                 <button
                   type="button"
                   className={styles.button}
-                  disabled={isBusy || isSaving || isImporting || isSaved || !hasPlan}
+                  disabled={isBusy || isSaving || isSaved || !hasPlan}
                   onClick={onSave}
                 >
                   {isSaving
@@ -273,13 +271,6 @@ RowPlannerControl.propTypes = {
   isSaved: PropTypes.bool,
   saveError: PropTypes.string,
   saveWarnings: PropTypes.arrayOf(PropTypes.string),
-  isImporting: PropTypes.bool,
-  importResult: PropTypes.shape({
-    saved: PropTypes.bool,
-    error: PropTypes.string,
-    rowCount: PropTypes.number,
-    warnings: PropTypes.arrayOf(PropTypes.string),
-  }),
   onFieldChange: PropTypes.func.isRequired,
   onSettingsChange: PropTypes.func.isRequired,
   onSurveyFile: PropTypes.func.isRequired,
@@ -287,5 +278,4 @@ RowPlannerControl.propTypes = {
   onClear: PropTypes.func.isRequired,
   onDownload: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
-  onImportFile: PropTypes.func.isRequired,
 };

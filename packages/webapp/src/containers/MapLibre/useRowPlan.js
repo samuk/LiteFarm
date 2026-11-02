@@ -16,15 +16,13 @@
 // Draws a planned set of rows (and the connected path) on top of the map. Passing null removes it.
 
 import { useEffect } from 'react';
-import { MAP_LABEL_FONT } from '../../util/mapProvider';
 
 export const ROW_PLAN_SOURCE_ID = 'row-plan';
 export const ROW_PLAN_ROWS_LAYER_ID = 'row-plan-rows';
 export const ROW_PLAN_PATH_LAYER_ID = 'row-plan-path';
-export const ROW_PLAN_LABELS_LAYER_ID = 'row-plan-labels';
 
 const removePlan = (map) => {
-  [ROW_PLAN_LABELS_LAYER_ID, ROW_PLAN_PATH_LAYER_ID, ROW_PLAN_ROWS_LAYER_ID].forEach((id) => {
+  [ROW_PLAN_PATH_LAYER_ID, ROW_PLAN_ROWS_LAYER_ID].forEach((id) => {
     if (map.getLayer?.(id)) map.removeLayer(id);
   });
   if (map.getSource?.(ROW_PLAN_SOURCE_ID)) map.removeSource(ROW_PLAN_SOURCE_ID);
@@ -57,21 +55,6 @@ export default function useRowPlan({ map, collection }) {
         paint: { 'line-color': '#ff8800', 'line-width': 2 },
       });
     }
-    // Row numbers, one label at the middle of each row. Labels that would overlap are dropped by
-    // MapLibre, so a dense field shows more of them as you zoom in.
-    map.addLayer({
-      id: ROW_PLAN_LABELS_LAYER_ID,
-      type: 'symbol',
-      source: ROW_PLAN_SOURCE_ID,
-      filter: ['==', ['get', 'role'], 'row'],
-      layout: {
-        'symbol-placement': 'line-center',
-        'text-field': ['to-string', ['get', 'row']],
-        'text-font': MAP_LABEL_FONT,
-        'text-size': 12,
-      },
-      paint: { 'text-color': '#ffffff', 'text-halo-color': '#003a57', 'text-halo-width': 1.5 },
-    });
     return () => {
       // The map may already have been removed when the page unmounts.
       try {
