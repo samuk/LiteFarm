@@ -170,11 +170,13 @@ const rowPlanController = {
         await FieldRowModel.query(trx)
           .context(context)
           .insert(rows.map((row) => ({ ...row, row_plan_id: row_plan.row_plan_id })));
-        if (superseded && !superseded.superseded_at) {
-          await RowPlanModel.query(trx)
+        if (superseded) {
+          const updated = await RowPlanModel.query(trx)
             .context(context)
             .patch({ superseded_at: new Date().toISOString() })
-            .where({ row_plan_id: superseded.row_plan_id });
+            .where({ row_plan_id: superseded.row_plan_id })
+            .whereNull('superseded_at');
+          if (!updated) throw new RowPlanError('the plan to supersede is already superseded', 409);
         }
         await trx.commit();
         return res.status(201).send({ row_plan, row_count: rows.length, warnings });
@@ -297,14 +299,14 @@ const rowPlanController = {
         if (missing.length) {
           throw new RowPlanError(`rows not in this plan: ${missing.slice(0, 20).join(', ')}`);
         }
-        const started = await TaskRowModel.query()
-          .whereNotDeleted()
-          .where({ task_id })
-          .whereNot({ status: 'pending' })
-          .first();
-        if (started) throw new RowPlanError('rows on this task already have a result', 409);
-
         trx = await transaction.start(Model.knex());
+        const current = await trx('task_row')
+          .where({ task_id })
+          .forUpdate()
+          .select('status', 'deleted');
+        if (current.some((row) => !row.deleted && row.status !== 'pending')) {
+          throw new RowPlanError('rows on this task already have a result', 409);
+        }
         // Replace the set outright. Soft-deleted rows would keep the primary key.
         await trx('task_row').where({ task_id }).del();
         await TaskRowModel.query(trx)
@@ -418,7 +420,7 @@ const rowPlanController = {
           }
           for (const r of matches) {
             if (r.status !== 'pending' && r.status !== u.status) changed.push(u.row_number);
-            targets.push({ row_id: r.row_id, u });
+            if (r.status === 'pending') targets.push({ row_id: r.row_id, u });
           }
         }
         if (unmatched.length) {
@@ -434,25 +436,27 @@ const rowPlanController = {
           );
         }
 
-        const now = new Date().toISOString();
-        await trx.raw(
-          `UPDATE task_row SET status = v.status, completed_at = v.completed_at::timestamptz,
+        if (targets.length) {
+          const now = new Date().toISOString();
+          await trx.raw(
+            `UPDATE task_row SET status = v.status, completed_at = v.completed_at::timestamptz,
              note = v.note, updated_by_user_id = ?, updated_at = ?
            FROM (VALUES ${targets.map(() => '(?::uuid, ?::text, ?::text, ?::text)').join(', ')})
              AS v(row_id, status, completed_at, note)
            WHERE task_row.task_id = ? AND task_row.row_id = v.row_id`,
-          [
-            req.auth?.user_id,
-            now,
-            ...targets.flatMap(({ row_id, u }) => [
-              row_id,
-              u.status,
-              new Date(u.completed_at ?? now).toISOString(),
-              u.note ?? null,
-            ]),
-            task_id,
-          ],
-        );
+            [
+              req.auth?.user_id,
+              now,
+              ...targets.flatMap(({ row_id, u }) => [
+                row_id,
+                u.status,
+                new Date(u.completed_at ?? now).toISOString(),
+                u.note ?? null,
+              ]),
+              task_id,
+            ],
+          );
+        }
         await trx.commit();
         return res.sendStatus(204);
       } catch (error) {
@@ -484,7 +488,7 @@ const rowPlanController = {
           .context(context)
           .patch({ deleted: true })
           .where({ row_plan_id: plan.row_plan_id });
-        if (plan.supersedes_row_plan_id) {
+        if (!plan.superseded_at && plan.supersedes_row_plan_id) {
           const other = await RowPlanModel.query(trx)
             .whereNotDeleted()
             .where({ supersedes_row_plan_id: plan.supersedes_row_plan_id })
