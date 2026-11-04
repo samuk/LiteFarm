@@ -164,22 +164,68 @@ const toLine = (points: [number, number][]) => ({
   coordinates: points.map(([lat, lng]) => [lng, lat] as [number, number]),
 });
 
-/** Rows and connected path as GeoJSON for drawing on the map. */
-export const planToFeatureCollection = (result: PlanResult | null) => ({
-  type: 'FeatureCollection' as const,
-  features: [
-    ...(result?.rows ?? []).map((row, i) => ({
-      type: 'Feature' as const,
-      properties: { role: 'row', row: result!.tags[i]?.[0] ?? i, frag: result!.tags[i]?.[1] ?? 0 },
-      geometry: toLine(row),
-    })),
-    ...(result?.path ?? []).map((path, i) => ({
-      type: 'Feature' as const,
-      properties: { role: 'path', pass: i },
-      geometry: toLine(path),
-    })),
-  ],
-});
+/**
+ * Names for rows and nodes: F<field>R<row>, and F<field>R<row>N<node> (F1R12N3 is node 3 of row 12 in field 1).
+ * Nodes are numbered from 0 along each row. A row split by an obstacle keeps counting through its fragments,
+ * so every node name in a field is unique. The API names rows the same way on export.
+ */
+export const rowName = (fieldNumber: number, rowNumber: number) => `F${fieldNumber}R${rowNumber}`;
+export const nodeName = (fieldNumber: number, rowNumber: number, node: number) =>
+  `${rowName(fieldNumber, rowNumber)}N${node}`;
+
+/** The number of the first node of each row fragment, in the order of `rows`. */
+const nodeStarts = (rowTags: [number, number][], rows: [number, number][][]): number[] => {
+  const order = rowTags
+    .map((_, i) => i)
+    .sort((a, b) => rowTags[a][0] - rowTags[b][0] || rowTags[a][1] - rowTags[b][1]);
+  const used = new Map<number, number>();
+  const starts: number[] = [];
+  for (const i of order) {
+    const start = used.get(rowTags[i][0]) ?? 0;
+    starts[i] = start;
+    used.set(rowTags[i][0], start + rows[i].length);
+  }
+  return starts;
+};
+
+/**
+ * Rows and connected path as GeoJSON for drawing on the map.
+ * With a field number, each row also gets its name (F1R12), its field and the number of its first node.
+ */
+export const planToFeatureCollection = (result: PlanResult | null, fieldNumber?: number) => {
+  const rows = result?.rows ?? [];
+  const rowTags = rows.map((_, i): [number, number] => [
+    result!.tags[i]?.[0] ?? i,
+    result!.tags[i]?.[1] ?? 0,
+  ]);
+  const starts = fieldNumber === undefined ? [] : nodeStarts(rowTags, rows);
+  return {
+    type: 'FeatureCollection' as const,
+    features: [
+      ...rows.map((row, i) => ({
+        type: 'Feature' as const,
+        properties: {
+          role: 'row',
+          row: rowTags[i][0],
+          frag: rowTags[i][1],
+          ...(fieldNumber === undefined
+            ? {}
+            : {
+                name: rowName(fieldNumber, rowTags[i][0]),
+                field: fieldNumber,
+                node_start: starts[i],
+              }),
+        } as Record<string, any>,
+        geometry: toLine(row),
+      })),
+      ...(result?.path ?? []).map((path, i) => ({
+        type: 'Feature' as const,
+        properties: { role: 'path', pass: i } as Record<string, any>,
+        geometry: toLine(path),
+      })),
+    ],
+  };
+};
 
 const lengthMetres = (line: [number, number][]) =>
   line
@@ -208,9 +254,28 @@ const polygonFeature = (role: string, ring: Ring) => ({
   },
 });
 
-/** Same layout as the Sowbot web planner's swaths.geojson, so the file works with Sowbot tools. */
-export const buildDownloadGeoJSON = (request: PlanRequest, result: PlanResult) => {
-  const { features } = planToFeatureCollection(result);
+/**
+ * Same layout as the Sowbot web planner's swaths.geojson, so the file works with Sowbot tools.
+ * With a field number the rows are named F<field>R<row> and list their nodes as node_names (F<field>R<row>N<node>).
+ */
+export const buildDownloadGeoJSON = (
+  request: PlanRequest,
+  result: PlanResult,
+  fieldNumber?: number,
+) => {
+  const features = planToFeatureCollection(result, fieldNumber).features.map((feature) =>
+    fieldNumber !== undefined && feature.properties.role === 'row'
+      ? {
+          ...feature,
+          properties: {
+            ...feature.properties,
+            node_names: (feature.geometry.coordinates as unknown[]).map((_, node) =>
+              nodeName(fieldNumber, feature.properties.row, feature.properties.node_start + node),
+            ),
+          },
+        }
+      : feature,
+  );
   return {
     type: 'FeatureCollection' as const,
     properties: {
@@ -224,6 +289,7 @@ export const buildDownloadGeoJSON = (request: PlanRequest, result: PlanResult) =
       headland: request.h,
       snake: request.s,
       contour: result.contour,
+      ...(fieldNumber === undefined ? {} : { field_number: fieldNumber }),
     },
     features: [
       polygonFeature('field', request.field),

@@ -120,7 +120,7 @@ vi.mock('../store/api/rowPlanApi', () => ({
     (args: any) => ({ unwrap: () => harness.importRowPlan(args) }),
     { isLoading: false },
   ],
-  useGetFieldRowPlanQuery: (args: any, options: any) => {
+  useGetFarmRowPlansQuery: (args: any, options: any) => {
     harness.savedPlanArgs(args, options);
     return { data: options?.skip ? undefined : harness.savedPlan, refetch: harness.refetchSavedPlan };
   },
@@ -358,32 +358,34 @@ describe('MapLibre farm map', () => {
     await waitFor(() => expect(save().disabled).toBe(false));
   });
 
-  it('draws the saved plan of the field on load, without planning again', () => {
+  it('draws the saved plans of every field on load, without planning again', () => {
     harness.internal.locations = { area: { field: [field] } };
+    const row = (field: number, location_id: string) => ({
+      type: 'Feature',
+      properties: { role: 'row', row: 0, frag: 0, field, location_id, name: `F${field}R0` },
+      geometry: { type: 'LineString', coordinates: [[0, 0], [1, 1]] },
+    });
     harness.savedPlan = {
       type: 'FeatureCollection',
+      properties: { field_numbers: { a: 1, b: 2 }, next_field_number: 3 },
       features: [
         {
           type: 'Feature',
-          properties: { role: 'field' },
+          properties: { role: 'field', field: 1 },
           geometry: { type: 'Polygon', coordinates: [[[0, 0], [0, 1], [1, 1], [0, 0]]] },
         },
-        {
-          type: 'Feature',
-          properties: { role: 'row', row: 0, frag: 0 },
-          geometry: { type: 'LineString', coordinates: [[0, 0], [1, 1]] },
-        },
+        row(1, 'a'),
+        row(2, 'b'),
       ],
     };
     render(<MapLibreMap isCompactSideMenu={false} />);
     loadMap();
     expect(harness.savedPlanArgs).toHaveBeenCalledWith(
-      { farm_id: 'farm', location_id: field.location_id },
+      { farm_id: 'farm' },
       expect.objectContaining({ skip: false, refetchOnMountOrArgChange: true }),
     );
-    const map = harness.maps[0];
-    expect(map.sources['row-plan'].options.data.features).toHaveLength(1);
-    expect(map.sources['row-plan'].options.data.features[0].properties.role).toBe('row');
+    const features = harness.maps[0].sources['row-plan'].options.data.features;
+    expect(features.map((f: any) => f.properties.name)).toEqual(['F1R0', 'F2R0']);
   });
 
   it('refetches the saved plan after a successful save', async () => {

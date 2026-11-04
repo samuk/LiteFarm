@@ -25,6 +25,7 @@ import {
   computeMapHash,
   rowsOutsideField,
   buildRowPlanGeoJSON,
+  buildFarmRowPlanGeoJSON,
 } from '../util/rowPlan.js';
 
 const RESULT_STATUSES = ['done', 'aborted'];
@@ -52,6 +53,28 @@ const getFieldArea = (farm_id, location_id) =>
     })
     .whereIn('figure.type', ['field', 'garden'])
     .first('location.location_id', 'area.grid_points');
+
+const getFieldAreas = (farm_id, location_ids) =>
+  Model.knex()('location')
+    .join('figure', 'figure.location_id', 'location.location_id')
+    .join('area', 'area.figure_id', 'figure.figure_id')
+    .where({ 'location.farm_id': farm_id })
+    .whereIn('location.location_id', location_ids)
+    .select('location.location_id', 'location.name', 'area.grid_points');
+
+/**
+ * The number of a field in row names (F1, F2, ...). A field keeps its number for good, across new and retracted
+ * plans, and numbers are never reused within a farm. Call inside a transaction that holds the farm's lock.
+ */
+const fieldNumberFor = async (trx, farm_id, location_id) => {
+  const existing = await trx('row_plan')
+    .where({ farm_id, location_id })
+    .whereNotNull('field_number')
+    .first('field_number');
+  if (existing) return existing.field_number;
+  const { max } = await trx('row_plan').where({ farm_id }).max('field_number as max').first();
+  return (max ?? 0) + 1;
+};
 
 const getLivePlan = (farm_id, row_plan_id) =>
   RowPlanModel.query().whereNotDeleted().where({ farm_id, row_plan_id }).first();
@@ -150,11 +173,15 @@ const rowPlanController = {
         }
 
         trx = await transaction.start(Model.knex());
+        // Two fields saved at once must not take the same number.
+        await trx.raw('SELECT pg_advisory_xact_lock(hashtext(?))', [`row_plan_field_number:${farm_id}`]);
+        const field_number = await fieldNumberFor(trx, farm_id, location_id);
         const row_plan = await RowPlanModel.query(trx)
           .context(context)
           .insert({
             farm_id,
             location_id,
+            field_number,
             source: properties.source,
             map_id: properties.map_id,
             map_hash: properties.map_hash,
@@ -221,6 +248,67 @@ const rowPlanController = {
           .where({ row_plan_id: plan.row_plan_id })
           .orderBy('position');
         return res.status(200).send({ ...plan, rows });
+      } catch (error) {
+        return sendError(res, error);
+      }
+    };
+  },
+
+  /**
+   * GET /row_plan/farm/:farm_id/geojson
+   * One document with the current plan of every field that has one, rows named F<field>R<row>.
+   * A field with both an in-app and a robot plan gives its newest.
+   */
+  exportFarmRowPlans() {
+    return async (req, res) => {
+      try {
+        const { farm_id } = req.params;
+        const plans = await RowPlanModel.query()
+          .whereNotDeleted()
+          .where({ farm_id })
+          .whereNull('superseded_at')
+          .orderBy('created_at', 'desc');
+        const newest = new Map();
+        for (const plan of plans) {
+          if (!newest.has(plan.location_id)) newest.set(plan.location_id, plan);
+        }
+        const current = [...newest.values()];
+        const rows = current.length
+          ? await FieldRowModel.query()
+              .whereNotDeleted()
+              .whereIn(
+                'row_plan_id',
+                current.map((plan) => plan.row_plan_id),
+              )
+              .orderBy('position')
+          : [];
+        const areas = current.length
+          ? await getFieldAreas(
+              farm_id,
+              current.map((plan) => plan.location_id),
+            )
+          : [];
+        const areaByLocation = new Map(areas.map((area) => [area.location_id, area]));
+        const entries = current.map((plan) => ({
+          plan,
+          rows: rows.filter((row) => row.row_plan_id === plan.row_plan_id),
+          name: areaByLocation.get(plan.location_id)?.name ?? null,
+          ring: areaByLocation.get(plan.location_id)?.grid_points ?? null,
+        }));
+        // Every field ever planned keeps its number, even when its plans were retracted, so a field planned
+        // next gets the right number in its preview.
+        const numbered = await Model.knex()('row_plan')
+          .where({ farm_id })
+          .whereNotNull('field_number')
+          .distinct('location_id', 'field_number');
+        const fieldNumbers = Object.fromEntries(
+          numbered.map(({ location_id, field_number }) => [location_id, field_number]),
+        );
+        const nextFieldNumber = Math.max(0, ...Object.values(fieldNumbers)) + 1;
+        res.type('application/geo+json');
+        return res
+          .status(200)
+          .send(buildFarmRowPlanGeoJSON(entries, { fieldNumbers, nextFieldNumber }));
       } catch (error) {
         return sendError(res, error);
       }

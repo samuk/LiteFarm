@@ -40,6 +40,9 @@ export default function RowPlannerControl({
   onClear,
   onDownload,
   onSave,
+  onDownloadAll,
+  hasSavedPlans,
+  fieldNumber,
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -90,6 +93,9 @@ export default function RowPlannerControl({
                   ))}
                 </select>
               </label>
+              {fieldNumber !== undefined && (
+                <p className={styles.note}>{t(prefix + 'FIELD_NAMING', { field: fieldNumber })}</p>
+              )}
               {numberInput('toolWidth', 'TOOL_WIDTH', { min: 0.5, step: 0.5 })}
               {!settings.contour && numberInput('angle', 'ANGLE', { step: 5 })}
               {numberInput('headland', 'HEADLAND', { min: 0, step: 1 })}
@@ -149,6 +155,14 @@ export default function RowPlannerControl({
                   onClick={onDownload}
                 >
                   {t(prefix + 'DOWNLOAD')}
+                </button>
+                <button
+                  type="button"
+                  className={styles.button}
+                  disabled={isBusy || !hasSavedPlans}
+                  onClick={onDownloadAll}
+                >
+                  {t(prefix + 'DOWNLOAD_ALL')}
                 </button>
                 <button
                   type="button"
@@ -242,4 +256,7 @@ RowPlannerControl.propTypes = {
   onClear: PropTypes.func.isRequired,
   onDownload: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
+  onDownloadAll: PropTypes.func,
+  hasSavedPlans: PropTypes.bool,
+  fieldNumber: PropTypes.number,
 };

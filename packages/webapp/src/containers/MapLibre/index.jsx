@@ -100,7 +100,7 @@ import {
   summarisePlan,
   validateSettings,
 } from '../../util/rowPlanner';
-import { useGetFieldRowPlanQuery, useImportRowPlanMutation } from '../../store/api/rowPlanApi';
+import { useGetFarmRowPlansQuery, useImportRowPlanMutation } from '../../store/api/rowPlanApi';
 import useRowPlan from './useRowPlan';
 import RowPlannerControl from '../../components/Map/RowPlannerControl';
 
@@ -282,33 +282,35 @@ export default function MapLibreMap({ isCompactSideMenu }) {
     [internalLocations],
   );
   const planField = plannableAreas.find((area) => area.id === planFieldId) ?? plannableAreas[0];
+  // Every field's saved plan, loaded together so several fields show at once. Always refetched so a plan
+  // saved earlier (or superseded elsewhere) is never served from a stale cache.
+  const { data: farmPlans, refetch: refetchFarmPlans } = useGetFarmRowPlansQuery(
+    { farm_id },
+    { skip: !farm_id || isOffline, refetchOnMountOrArgChange: true },
+  );
+  // A field keeps its number for good; a field with no plan yet takes the next free one.
+  const planFieldNumber = planField
+    ? (farmPlans?.properties?.field_numbers?.[planField.id] ??
+      farmPlans?.properties?.next_field_number ??
+      1)
+    : undefined;
   const planCollection = useMemo(
-    () => (plan ? planToFeatureCollection(plan.result) : null),
-    [plan],
+    () => (plan ? planToFeatureCollection(plan.result, planFieldNumber) : null),
+    [plan, planFieldNumber],
   );
   const planSummary = useMemo(() => (plan ? summarisePlan(plan.result) : null), [plan]);
-  // The saved plan for the field, shown until a new plan is made. Always refetched so a plan
-  // saved earlier (or superseded elsewhere) is never served from a stale cache.
-  const { data: savedPlan, refetch: refetchSavedPlan } = useGetFieldRowPlanQuery(
-    { farm_id, location_id: planField?.id },
-    {
-      skip: !farm_id || !planField?.id || isOffline,
-      refetchOnMountOrArgChange: true,
-    },
-  );
-  const savedCollection = useMemo(
-    () =>
-      Array.isArray(savedPlan?.features)
-        ? {
-            type: 'FeatureCollection',
-            features: savedPlan.features.filter((f) => f.properties?.role === 'row'),
-          }
-        : null,
-    [savedPlan],
-  );
+  // Saved rows of every field, except the selected field while its unsaved plan is on screen.
+  const mapCollection = useMemo(() => {
+    const saved = (farmPlans?.features ?? []).filter(
+      (f) =>
+        f.properties?.role === 'row' && !(planCollection && f.properties.location_id === planField?.id),
+    );
+    const features = [...saved, ...(planCollection?.features ?? [])];
+    return features.length ? { type: 'FeatureCollection', features } : null;
+  }, [farmPlans, planCollection, planField?.id]);
   useRowPlan({
     map: mapReady ? mapRef.current : null,
-    collection: planCollection ?? savedCollection,
+    collection: mapCollection,
   });
   useEffect(() => () => plannerRef.current?.terminate(), []);
 
@@ -372,8 +374,17 @@ export default function MapLibreMap({ isCompactSideMenu }) {
 
   const handleDownloadPlan = () => {
     if (!plan) return;
-    const geojson = buildDownloadGeoJSON(plan.request, plan.result);
+    const geojson = buildDownloadGeoJSON(plan.request, plan.result, planFieldNumber);
     saveAs(new Blob([JSON.stringify(geojson)], { type: 'application/geo+json' }), 'swaths.geojson');
+  };
+
+  // All fields' saved plans in one file, rows named F<field>R<row>.
+  const handleDownloadAllPlans = () => {
+    if (!farmPlans?.features?.length) return;
+    saveAs(
+      new Blob([JSON.stringify(farmPlans)], { type: 'application/geo+json' }),
+      'farm-swaths.geojson',
+    );
   };
 
   const handleSavePlan = async () => {
@@ -384,10 +395,10 @@ export default function MapLibreMap({ isCompactSideMenu }) {
       const saved = await importRowPlan({
         farm_id,
         location_id: planField.id,
-        geojson: buildDownloadGeoJSON(saving.request, saving.result),
+        geojson: buildDownloadGeoJSON(saving.request, saving.result, planFieldNumber),
       }).unwrap();
       setSave({ plan: saving, saved: true, error: null, warnings: saved.warnings ?? [] });
-      refetchSavedPlan();
+      refetchFarmPlans();
     } catch (error) {
       setSave({
         plan: saving,
@@ -752,6 +763,9 @@ export default function MapLibreMap({ isCompactSideMenu }) {
                 setPlanErrorMessage(null);
               }}
               onDownload={handleDownloadPlan}
+              onDownloadAll={handleDownloadAllPlans}
+              hasSavedPlans={!!farmPlans?.features?.length}
+              fieldNumber={planFieldNumber}
               onSave={handleSavePlan}
             />
           )}

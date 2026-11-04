@@ -22,6 +22,7 @@ beforeEach(() => {
     'VITE_MAP_IMAGERY_URL',
     'VITE_MAP_IMAGERY_ATTRIBUTION',
     'VITE_MAP_IMAGERY_MAXZOOM',
+    'VITE_MAP_GLYPHS_URL',
   ])
     vi.stubEnv(key, '');
 });
@@ -49,6 +50,7 @@ describe('map provider configuration', () => {
     const { buildImageryStyle } = await import('../../util/mapProvider');
     expect(buildImageryStyle()).toEqual({
       version: 8,
+      glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
       sources: {
         imagery: {
           type: 'raster',

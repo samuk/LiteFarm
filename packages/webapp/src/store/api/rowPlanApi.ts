@@ -19,6 +19,7 @@ import { rowPlanUrl } from '../../apiConfig';
 export interface RowPlanSummary {
   row_plan_id: string;
   location_id: string;
+  field_number: number;
   source: 'in_app' | 'robot';
   created_at: string;
 }
@@ -44,6 +45,25 @@ export interface FieldRowPlanGeoJSON {
   type: 'FeatureCollection';
   properties?: { row_plan_id?: string; [key: string]: unknown };
   features: object[];
+}
+
+// The current plan of every field that has one, as one collection. Rows are named F<field>R<row> and carry
+// their field and location_id. `fields` lists the plans; `field_numbers` has every field ever planned.
+export interface FarmRowPlansGeoJSON {
+  type: 'FeatureCollection';
+  properties: {
+    multi_field: true;
+    fields: {
+      field_number: number;
+      field_location_id: string;
+      field_name: string | null;
+      row_plan_id: string;
+      row_count: number;
+    }[];
+    field_numbers: Record<string, number>;
+    next_field_number: number;
+  };
+  features: { properties: Record<string, any>; geometry: any }[];
 }
 
 export type TaskRowStatusValue = 'pending' | 'done' | 'aborted';
@@ -86,6 +106,14 @@ export const rowPlanApi = api.injectEndpoints({
         { type: 'TaskRows', id: String(task_id) },
       ],
     }),
+    // Every field's current plan in one request, for the map and the all-fields export.
+    getFarmRowPlans: build.query<FarmRowPlansGeoJSON, { farm_id: string }>({
+      // application/geo+json would otherwise come back as plain text.
+      query: ({ farm_id }) => ({
+        url: `${rowPlanUrl}/farm/${farm_id}/geojson`,
+        responseHandler: 'json',
+      }),
+    }),
     // The field's current (not superseded) plan as map features, or null when it has none.
     getFieldRowPlan: build.query<FieldRowPlanGeoJSON | null, GetFieldRowPlanArgs>({
       async queryFn({ farm_id, location_id }, _api, _extraOptions, baseQuery) {
@@ -127,6 +155,7 @@ export const rowPlanApi = api.injectEndpoints({
 export const {
   useImportRowPlanMutation,
   useGetFieldRowPlanQuery,
+  useGetFarmRowPlansQuery,
   useGetTaskRowsQuery,
   useSetTaskRowsMutation,
 } = rowPlanApi;
