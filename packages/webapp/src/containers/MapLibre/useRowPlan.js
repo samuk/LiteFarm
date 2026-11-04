@@ -30,10 +30,14 @@ export const ROW_PLAN_NODE_LABELS_LAYER_ID = 'row-plan-node-labels';
 
 // Fields take these colours in turn: field 1 first, field 7 wraps round to the first again.
 export const FIELD_COLOURS = ['#00aaff', '#ffcc00', '#ff5ec4', '#7bd88f', '#ff7f50', '#b388ff'];
+// 'at' gives a string, which MapLibre will not accept for a colour property without to-color.
 const FIELD_COLOUR = [
-  'at',
-  ['%', ['-', ['to-number', ['coalesce', ['get', 'field'], 1], 1], 1], FIELD_COLOURS.length],
-  ['literal', FIELD_COLOURS],
+  'to-color',
+  [
+    'at',
+    ['%', ['-', ['to-number', ['coalesce', ['get', 'field'], 1], 1], 1], FIELD_COLOURS.length],
+    ['literal', FIELD_COLOURS],
+  ],
 ];
 // Past this many nodes the node layers are skipped to keep the map responsive.
 export const MAX_NODE_FEATURES = 30000;
