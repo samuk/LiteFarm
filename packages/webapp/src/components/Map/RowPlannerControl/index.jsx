@@ -43,9 +43,19 @@ export default function RowPlannerControl({
   onDownloadAll,
   hasSavedPlans,
   fieldNumber,
+  farmMap,
+  fieldLocked,
+  isMapBusy,
+  mapErrorMessage,
+  onPublishMap,
+  onRetireMap,
+  onDownloadMap,
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [mapName, setMapName] = useState('');
+  const [mapSeason, setMapSeason] = useState('');
+  const [confirmRetire, setConfirmRetire] = useState(false);
   const prefix = 'FARM_MAP.ROW_PLANNER.';
   const set = (key, value) => onSettingsChange({ ...settings, [key]: value });
 
@@ -95,6 +105,11 @@ export default function RowPlannerControl({
               </label>
               {fieldNumber !== undefined && (
                 <p className={styles.note}>{t(prefix + 'FIELD_NAMING', { field: fieldNumber })}</p>
+              )}
+              {fieldLocked && (
+                <p className={styles.note} role="status">
+                  {t(prefix + 'FIELD_LOCKED', { name: farmMap?.name, version: farmMap?.version })}
+                </p>
               )}
               {numberInput('toolWidth', 'TOOL_WIDTH', { min: 0.5, step: 0.5 })}
               {!settings.contour && numberInput('angle', 'ANGLE', { step: 5 })}
@@ -167,7 +182,7 @@ export default function RowPlannerControl({
                 <button
                   type="button"
                   className={styles.button}
-                  disabled={isBusy || isSaving || isSaved || !hasPlan}
+                  disabled={isBusy || isSaving || isSaved || !hasPlan || fieldLocked}
                   onClick={onSave}
                 >
                   {isSaving
@@ -224,6 +239,95 @@ export default function RowPlannerControl({
                 </p>
               )}
               <p className={styles.note}>{t(prefix + 'NOTE')}</p>
+              <div className={styles.section} data-cy="farm-map-section">
+                <h3 className={styles.heading}>{t(prefix + 'FARM_MAP.TITLE')}</h3>
+                <p className={styles.result}>
+                  {farmMap
+                    ? t(prefix + 'FARM_MAP.PUBLISHED', {
+                        name: farmMap.name,
+                        version: farmMap.version,
+                        season: farmMap.season ?? '',
+                        count: farmMap.plans?.length ?? 0,
+                      })
+                    : t(prefix + 'FARM_MAP.NONE')}
+                </p>
+                <label className={styles.field}>
+                  {t(prefix + 'FARM_MAP.NAME')}
+                  <input
+                    type="text"
+                    value={mapName}
+                    maxLength={255}
+                    disabled={isMapBusy}
+                    onChange={(event) => setMapName(event.target.value)}
+                  />
+                </label>
+                <label className={styles.field}>
+                  {t(prefix + 'FARM_MAP.SEASON')}
+                  <input
+                    type="text"
+                    value={mapSeason}
+                    maxLength={100}
+                    disabled={isMapBusy}
+                    onChange={(event) => setMapSeason(event.target.value)}
+                  />
+                </label>
+                <div className={styles.actions}>
+                  <button
+                    type="button"
+                    className={styles.button}
+                    disabled={isBusy || isMapBusy || !hasSavedPlans || !mapName.trim()}
+                    onClick={() => onPublishMap({ name: mapName.trim(), season: mapSeason.trim() })}
+                  >
+                    {isMapBusy ? t(prefix + 'FARM_MAP.PUBLISHING') : t(prefix + 'FARM_MAP.PUBLISH')}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.button}
+                    disabled={isMapBusy || !farmMap}
+                    onClick={onDownloadMap}
+                  >
+                    {t(prefix + 'FARM_MAP.DOWNLOAD')}
+                  </button>
+                  {farmMap && !confirmRetire && (
+                    <button
+                      type="button"
+                      className={styles.button}
+                      disabled={isMapBusy}
+                      onClick={() => setConfirmRetire(true)}
+                    >
+                      {t(prefix + 'FARM_MAP.RETIRE')}
+                    </button>
+                  )}
+                  {farmMap && confirmRetire && (
+                    <>
+                      <button
+                        type="button"
+                        className={styles.button}
+                        disabled={isMapBusy}
+                        onClick={() => {
+                          setConfirmRetire(false);
+                          onRetireMap();
+                        }}
+                      >
+                        {t(prefix + 'FARM_MAP.CONFIRM_RETIRE')}
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.button}
+                        onClick={() => setConfirmRetire(false)}
+                      >
+                        {t(prefix + 'FARM_MAP.CANCEL')}
+                      </button>
+                    </>
+                  )}
+                </div>
+                {mapErrorMessage && (
+                  <p className={styles.error} role="alert">
+                    {t(prefix + 'FARM_MAP.FAILED', { message: mapErrorMessage })}
+                  </p>
+                )}
+                <p className={styles.note}>{t(prefix + 'FARM_MAP.NOTE')}</p>
+              </div>
             </>
           )}
         </div>
@@ -259,4 +363,16 @@ RowPlannerControl.propTypes = {
   onDownloadAll: PropTypes.func,
   hasSavedPlans: PropTypes.bool,
   fieldNumber: PropTypes.number,
+  farmMap: PropTypes.shape({
+    name: PropTypes.string,
+    version: PropTypes.number,
+    season: PropTypes.string,
+    plans: PropTypes.array,
+  }),
+  fieldLocked: PropTypes.bool,
+  isMapBusy: PropTypes.bool,
+  mapErrorMessage: PropTypes.string,
+  onPublishMap: PropTypes.func,
+  onRetireMap: PropTypes.func,
+  onDownloadMap: PropTypes.func,
 };

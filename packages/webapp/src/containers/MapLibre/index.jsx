@@ -101,6 +101,12 @@ import {
   validateSettings,
 } from '../../util/rowPlanner';
 import { useGetFarmRowPlansQuery, useImportRowPlanMutation } from '../../store/api/rowPlanApi';
+import {
+  useGetPublishedFarmMapQuery,
+  useLazyGetPublishedFarmMapGeoJSONQuery,
+  usePublishFarmMapMutation,
+  useRetireFarmMapMutation,
+} from '../../store/api/farmMapApi';
 import useRowPlan from './useRowPlan';
 import RowPlannerControl from '../../components/Map/RowPlannerControl';
 
@@ -294,6 +300,17 @@ export default function MapLibreMap({ isCompactSideMenu }) {
       farmPlans?.properties?.next_field_number ??
       1)
     : undefined;
+  // The farm's published map. Its plans are frozen, so a field in it cannot be re-planned until it is retired.
+  const { data: publishedMap } = useGetPublishedFarmMapQuery(
+    { farm_id },
+    { skip: !farm_id || isOffline },
+  );
+  const [publishFarmMap, { isLoading: mapPublishing }] = usePublishFarmMapMutation();
+  const [retireFarmMap, { isLoading: mapRetiring }] = useRetireFarmMapMutation();
+  const [fetchMapGeoJSON, { isFetching: mapDownloading }] =
+    useLazyGetPublishedFarmMapGeoJSONQuery();
+  const [mapError, setMapError] = useState(null);
+  const planFieldLocked = !!planField && !!publishedMap?.plans?.some((p) => p.location_id === planField.id);
   const planCollection = useMemo(
     () => (plan ? planToFeatureCollection(plan.result, planFieldNumber) : null),
     [plan, planFieldNumber],
@@ -385,6 +402,41 @@ export default function MapLibreMap({ isCompactSideMenu }) {
       new Blob([JSON.stringify(farmPlans)], { type: 'application/geo+json' }),
       'farm-swaths.geojson',
     );
+  };
+
+  const errorText = (error) => error?.data?.error ?? error?.error ?? error?.message ?? String(error);
+
+  const handlePublishMap = async ({ name, season }) => {
+    setMapError(null);
+    try {
+      await publishFarmMap({ farm_id, name, season }).unwrap();
+    } catch (error) {
+      setMapError(errorText(error));
+    }
+  };
+
+  const handleRetireMap = async () => {
+    if (!publishedMap) return;
+    setMapError(null);
+    try {
+      await retireFarmMap({ farm_map_id: publishedMap.farm_map_id }).unwrap();
+    } catch (error) {
+      setMapError(errorText(error));
+    }
+  };
+
+  const handleDownloadMap = async () => {
+    if (!publishedMap) return;
+    setMapError(null);
+    try {
+      const geojson = await fetchMapGeoJSON({ farm_id }).unwrap();
+      saveAs(
+        new Blob([JSON.stringify(geojson)], { type: 'application/geo+json' }),
+        `farm-map-v${publishedMap.version}.geojson`,
+      );
+    } catch (error) {
+      setMapError(errorText(error));
+    }
   };
 
   const handleSavePlan = async () => {
@@ -767,6 +819,13 @@ export default function MapLibreMap({ isCompactSideMenu }) {
               hasSavedPlans={!!farmPlans?.features?.length}
               fieldNumber={planFieldNumber}
               onSave={handleSavePlan}
+              farmMap={publishedMap ?? null}
+              fieldLocked={planFieldLocked}
+              isMapBusy={mapPublishing || mapRetiring || mapDownloading}
+              mapErrorMessage={mapError}
+              onPublishMap={handlePublishMap}
+              onRetireMap={handleRetireMap}
+              onDownloadMap={handleDownloadMap}
             />
           )}
           {drawingState.type && (

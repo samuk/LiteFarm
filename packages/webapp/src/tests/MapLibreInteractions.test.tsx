@@ -115,6 +115,12 @@ vi.mock('react-redux', () => ({
   useSelector: (selector: Function) => selector(harness.state),
   useDispatch: () => harness.dispatch,
 }));
+vi.mock('../store/api/farmMapApi', () => ({
+  useGetPublishedFarmMapQuery: () => ({ data: undefined }),
+  usePublishFarmMapMutation: () => [vi.fn(), { isLoading: false }],
+  useRetireFarmMapMutation: () => [vi.fn(), { isLoading: false }],
+  useLazyGetPublishedFarmMapGeoJSONQuery: () => [vi.fn(), { isFetching: false }],
+}));
 vi.mock('../store/api/rowPlanApi', () => ({
   useImportRowPlanMutation: () => [
     (args: any) => ({ unwrap: () => harness.importRowPlan(args) }),

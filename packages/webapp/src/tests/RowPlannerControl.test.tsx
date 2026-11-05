@@ -54,7 +54,7 @@ const setup = (props = {}) => {
     />,
   );
   fireEvent.click(screen.getByRole('button', { name: 'FARM_MAP.ROW_PLANNER.TITLE' }));
-  return handlers;
+  return { ...handlers, ...props } as typeof handlers & Record<string, any>;
 };
 
 afterEach(cleanup);
@@ -163,5 +163,48 @@ describe('RowPlannerControl', () => {
     expect(text).toContain('FELL_BACK');
     expect(text).toContain('"swath":"1.23"');
     expect(text).toContain('"passes":2');
+  });
+  describe('farm map', () => {
+    const map = { name: 'Map 2027', version: 2, season: '2027', plans: [{}, {}] };
+    const mapHandlers = () => ({
+      onPublishMap: vi.fn(),
+      onRetireMap: vi.fn(),
+      onDownloadMap: vi.fn(),
+    });
+
+    it('says there is no published map and cannot download one', () => {
+      setup({ ...mapHandlers(), farmMap: null });
+      expect(screen.getByText('FARM_MAP.ROW_PLANNER.FARM_MAP.NONE')).toBeTruthy();
+      expect(
+        (screen.getByText('FARM_MAP.ROW_PLANNER.FARM_MAP.DOWNLOAD') as HTMLButtonElement).disabled,
+      ).toBe(true);
+    });
+    it('publishes only with a name and saved plans', () => {
+      const h = setup({ ...mapHandlers(), farmMap: null, hasSavedPlans: true });
+      const publish = screen.getByText('FARM_MAP.ROW_PLANNER.FARM_MAP.PUBLISH') as HTMLButtonElement;
+      expect(publish.disabled).toBe(true);
+      fireEvent.change(screen.getByLabelText('FARM_MAP.ROW_PLANNER.FARM_MAP.NAME'), {
+        target: { value: ' Map 2027 ' },
+      });
+      fireEvent.change(screen.getByLabelText('FARM_MAP.ROW_PLANNER.FARM_MAP.SEASON'), {
+        target: { value: '2027' },
+      });
+      fireEvent.click(publish);
+      expect(h.onPublishMap).toHaveBeenCalledWith({ name: 'Map 2027', season: '2027' });
+    });
+    it('needs a second press to retire the map', () => {
+      const h = setup({ ...mapHandlers(), farmMap: map });
+      fireEvent.click(screen.getByText('FARM_MAP.ROW_PLANNER.FARM_MAP.RETIRE'));
+      expect(h.onRetireMap).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByText('FARM_MAP.ROW_PLANNER.FARM_MAP.CONFIRM_RETIRE'));
+      expect(h.onRetireMap).toHaveBeenCalledTimes(1);
+    });
+    it('blocks saving a plan for a field in the published map and says why', () => {
+      setup({ ...mapHandlers(), farmMap: map, fieldLocked: true, hasPlan: true });
+      expect(screen.getByText(/FIELD_LOCKED.*Map 2027/)).toBeTruthy();
+      expect((screen.getByText('FARM_MAP.ROW_PLANNER.SAVE') as HTMLButtonElement).disabled).toBe(
+        true,
+      );
+    });
   });
 });

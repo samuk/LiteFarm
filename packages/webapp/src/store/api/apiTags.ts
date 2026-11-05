@@ -63,6 +63,7 @@ export const FarmTags = [
   'Certifications',
   'SupportedCertifiers',
   'TaskRows',
+  'FarmMaps',
 ] as const;
 
 /**
