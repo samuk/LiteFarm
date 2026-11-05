@@ -67,11 +67,12 @@ export const farmMapApi = api.injectEndpoints({
     // Puts the current plan of every field in a new map version and publishes it, which retires the
     // previous published map. A draft left behind by a failed publish is deleted again.
     publishFarmMap: build.mutation<FarmMapWithPlans, PublishFarmMapArgs>({
-      async queryFn({ name, season }, _api, _extraOptions, baseQuery) {
+      async queryFn({ farm_id, name, season }, _api, _extraOptions, baseQuery) {
         const created = await baseQuery({
           url: farmMapUrl,
           method: 'POST',
-          body: { name, season: season || undefined },
+          // The api checks the farm in the body against the farm_id header.
+          body: { farm_id, name, season: season || undefined },
         });
         if (created.error) return { error: created.error };
         const { farm_map } = created.data as { farm_map: FarmMap };

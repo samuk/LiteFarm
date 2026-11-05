@@ -169,13 +169,16 @@ describe('farm map api', () => {
 
   it('deletes the draft when publishing fails', async () => {
     const calls: string[] = [];
+    const bodies: any[] = [];
     vi.stubGlobal(
       'fetch',
       vi.fn(async (request: Request) => {
         const path = new URL(request.url).pathname;
         calls.push(`${request.method} ${path}`);
-        if (request.method === 'POST' && path === '/farm_map')
+        if (request.method === 'POST' && path === '/farm_map') {
+          bodies.push(await request.json());
           return json({ farm_map: { farm_map_id: 'd1' }, plans: [] }, 'application/json');
+        }
         if (path.endsWith('/publish'))
           return new Response(JSON.stringify({ error: 'plans have been replaced' }), {
             status: 409,
@@ -188,6 +191,7 @@ describe('farm map api', () => {
       farmMapApi.endpoints.publishFarmMap.initiate({ farm_id: 'farm', name: 'Map' }),
     );
     expect('error' in result).toBe(true);
+    expect(bodies[0]).toMatchObject({ farm_id: 'farm', name: 'Map' });
     expect(calls).toEqual(['POST /farm_map', 'POST /farm_map/d1/publish', 'DELETE /farm_map/d1']);
   });
 });
