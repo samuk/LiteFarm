@@ -162,6 +162,8 @@ async function tableCleanup(knex) {
     DELETE FROM "farm_notes_read";
     DELETE FROM "farm_note";
     DELETE FROM "soil_lab_result";
+    DELETE FROM "row_plan";
+    DELETE FROM "row_plan_field_number";
     DELETE FROM "location";
     DELETE FROM "userFarm";
     DELETE FROM "farm";

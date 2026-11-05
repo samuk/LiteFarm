@@ -67,13 +67,17 @@ const getFieldAreas = (farm_id, location_ids) =>
  * plans, and numbers are never reused within a farm. Call inside a transaction that holds the farm's lock.
  */
 const fieldNumberFor = async (trx, farm_id, location_id) => {
-  const existing = await trx('row_plan')
+  const existing = await trx('row_plan_field_number')
     .where({ farm_id, location_id })
-    .whereNotNull('field_number')
     .first('field_number');
   if (existing) return existing.field_number;
-  const { max } = await trx('row_plan').where({ farm_id }).max('field_number as max').first();
-  return (max ?? 0) + 1;
+  const { max } = await trx('row_plan_field_number')
+    .where({ farm_id })
+    .max('field_number as max')
+    .first();
+  const field_number = (max ?? 0) + 1;
+  await trx('row_plan_field_number').insert({ farm_id, location_id, field_number });
+  return field_number;
 };
 
 const getLivePlan = (farm_id, row_plan_id) =>
@@ -297,10 +301,9 @@ const rowPlanController = {
         }));
         // Every field ever planned keeps its number, even when its plans were retracted, so a field planned
         // next gets the right number in its preview.
-        const numbered = await Model.knex()('row_plan')
+        const numbered = await Model.knex()('row_plan_field_number')
           .where({ farm_id })
-          .whereNotNull('field_number')
-          .distinct('location_id', 'field_number');
+          .select('location_id', 'field_number');
         const fieldNumbers = Object.fromEntries(
           numbered.map(({ location_id, field_number }) => [location_id, field_number]),
         );
