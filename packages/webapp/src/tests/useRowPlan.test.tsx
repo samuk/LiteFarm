@@ -16,6 +16,11 @@
 import { renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import useRowPlan, {
+  nodeFeatures,
+  ROW_PLAN_LABELS_LAYER_ID,
+  ROW_PLAN_NODE_LABELS_LAYER_ID,
+  ROW_PLAN_NODES_LAYER_ID,
+  ROW_PLAN_NODES_SOURCE_ID,
   ROW_PLAN_PATH_LAYER_ID,
   ROW_PLAN_ROWS_LAYER_ID,
   ROW_PLAN_SOURCE_ID,
@@ -64,12 +69,13 @@ describe('useRowPlan', () => {
     renderHook(() => useRowPlan({ map, collection: collection('row', 'row') }));
     expect(map.sources.has(ROW_PLAN_SOURCE_ID)).toBe(true);
     expect(map.layers.has(ROW_PLAN_ROWS_LAYER_ID)).toBe(true);
+    expect(map.layers.has(ROW_PLAN_LABELS_LAYER_ID)).toBe(true);
     expect(map.layers.has(ROW_PLAN_PATH_LAYER_ID)).toBe(false);
   });
   it('adds the path layer above the rows when there is a path', () => {
     const map = makeMap();
     renderHook(() => useRowPlan({ map, collection: collection('row', 'path') }));
-    expect([...map.layers]).toEqual([ROW_PLAN_ROWS_LAYER_ID, ROW_PLAN_PATH_LAYER_ID]);
+    expect([...map.layers].slice(0, 2)).toEqual([ROW_PLAN_ROWS_LAYER_ID, ROW_PLAN_PATH_LAYER_ID]);
   });
   it('replaces the plan when the collection changes and removes it on null and unmount', () => {
     const map = makeMap();
@@ -77,7 +83,8 @@ describe('useRowPlan', () => {
       initialProps: { c: collection('row', 'path') as any },
     });
     rerender({ c: collection('row') });
-    expect([...map.layers]).toEqual([ROW_PLAN_ROWS_LAYER_ID]);
+    expect(map.layers.has(ROW_PLAN_PATH_LAYER_ID)).toBe(false);
+    expect(map.layers.has(ROW_PLAN_ROWS_LAYER_ID)).toBe(true);
     rerender({ c: null });
     expect(map.layers.size).toBe(0);
     expect(map.sources.size).toBe(0);
@@ -92,5 +99,48 @@ describe('useRowPlan', () => {
       throw new Error('gone');
     });
     expect(() => unmount()).not.toThrow();
+  });
+});
+
+describe('row and node names on the map', () => {
+  const named = (field: number, row: number, start = 0) => ({
+    type: 'Feature',
+    properties: { role: 'row', row, field, name: `F${field}R${row}`, node_start: start },
+    geometry: {
+      type: 'LineString',
+      coordinates: [
+        [0, 0],
+        [1, 1],
+      ],
+    },
+  });
+
+  it('names nodes from the row name and first node number', () => {
+    const nodes = nodeFeatures({ features: [named(2, 5, 2)] });
+    expect(nodes.map((n: any) => n.properties.name)).toEqual(['F2R5N2', 'F2R5N3']);
+  });
+  it('skips nodes past the limit', () => {
+    const many = {
+      features: [
+        {
+          ...named(1, 1),
+          geometry: { type: 'LineString', coordinates: Array(30001).fill([0, 0]) },
+        },
+      ],
+    };
+    expect(nodeFeatures(many)).toEqual([]);
+  });
+  it('adds node layers for rows of several fields and removes them with the plan', () => {
+    const map = makeMap();
+    const c = { type: 'FeatureCollection', features: [named(1, 1), named(2, 1)] };
+    const { rerender } = renderHook(({ c }) => useRowPlan({ map, collection: c }), {
+      initialProps: { c: c as any },
+    });
+    expect(map.sources.has(ROW_PLAN_NODES_SOURCE_ID)).toBe(true);
+    expect(map.layers.has(ROW_PLAN_NODES_LAYER_ID)).toBe(true);
+    expect(map.layers.has(ROW_PLAN_NODE_LABELS_LAYER_ID)).toBe(true);
+    rerender({ c: null });
+    expect(map.layers.size).toBe(0);
+    expect(map.sources.size).toBe(0);
   });
 });

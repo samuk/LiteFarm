@@ -66,6 +66,29 @@ export const lineLengthMetres = (points) =>
   points.slice(1).reduce((sum, p, i) => sum + distanceMetres(points[i], p), 0);
 
 /**
+ * Names for rows and nodes: F<field>R<row>N<node>, for example F1R12N3 is node 3 of row 12 in field 1.
+ * Nodes are numbered from 0 along each row. A row split by an obstacle keeps counting through its fragments
+ * in fragment order, so every node name in a field is unique.
+ */
+export const rowName = (fieldNumber, rowNumber) => `F${fieldNumber}R${rowNumber}`;
+export const nodeName = (fieldNumber, rowNumber, node) =>
+  `${rowName(fieldNumber, rowNumber)}N${node}`;
+
+/** Map of `${row_number}/${frag}` to the number of the fragment's first node. */
+export const nodeStarts = (rows) => {
+  const starts = new Map();
+  const used = new Map();
+  [...rows]
+    .sort((a, b) => a.row_number - b.row_number || a.frag - b.frag)
+    .forEach((r) => {
+      const start = used.get(r.row_number) ?? 0;
+      starts.set(`${r.row_number}/${r.frag}`, start);
+      used.set(r.row_number, start + r.line_points.length);
+    });
+  return starts;
+};
+
+/**
  * Parse and validate a rows.geojson document (object or JSON text).
  * Returns { properties, rows } where rows are in mission order:
  *   { row_number, frag, position, line_points: [{ lat, lng }], length }
@@ -90,6 +113,9 @@ export const parseRowPlanGeoJSON = (input) => {
   }
   if (props.version !== SCHEMA_VERSION) {
     throw new RowPlanError(`unsupported plan version ${JSON.stringify(props.version)}`);
+  }
+  if (Array.isArray(props.fields)) {
+    throw new RowPlanError('this file holds more than one field: import one field at a time');
   }
   if (!Array.isArray(props.origin) || props.origin.length !== 2) {
     throw new RowPlanError('origin must be [lat, lon]');
@@ -139,8 +165,15 @@ export const parseRowPlanGeoJSON = (input) => {
 
   const rows = [];
   const seen = new Set();
+  const fieldsInFile = new Set();
   (Array.isArray(doc.features) ? doc.features : []).forEach((feature, i) => {
     if (feature?.properties?.role !== 'row') return;
+    // Names such as F1R12 are generated on export. The field number in a file is not trusted on import: the
+    // server numbers the field. A file that mixes fields cannot be one field's plan.
+    if (feature.properties.field != null) fieldsInFile.add(feature.properties.field);
+    if (fieldsInFile.size > 1) {
+      throw new RowPlanError('this file holds more than one field: import one field at a time');
+    }
     const geometry = feature.geometry;
     if (geometry?.type !== 'LineString')
       throw new RowPlanError(`feature ${i}: row is not a LineString`);
@@ -223,6 +256,22 @@ export const canonicalRowsText = (rows) =>
 export const computeMapHash = (rows) =>
   createHash('sha256').update(canonicalRowsText(rows), 'utf8').digest('hex');
 
+/**
+ * Canonical text of a farm map: the canonical rows of every field, ordered by field number:
+ *   [[field_number,<canonical rows>],...]
+ * Row names come from the field number and row number, so the hash covers the names a robot will use.
+ * entries: [{ field_number, rows }]
+ */
+export const canonicalFarmMapText = (entries) =>
+  `[${[...entries]
+    .sort((a, b) => a.field_number - b.field_number)
+    .map((e) => `[${e.field_number},${canonicalRowsText(e.rows)}]`)
+    .join(',')}]`;
+
+/** SHA-256 of the canonical farm map text, lower-case hex. Covers geometry, order and field numbers only. */
+export const computeFarmMapHash = (entries) =>
+  createHash('sha256').update(canonicalFarmMapText(entries), 'utf8').digest('hex');
+
 // Local planar projection in metres, good enough for a field.
 const projector = (origin) => {
   const kLat = (Math.PI / 180) * EARTH_RADIUS_M;
@@ -294,12 +343,7 @@ export const parseRowSpec = (text) => {
   return [...numbers].sort((a, b) => a - b);
 };
 
-/**
- * Build the export document.
- * plan: row_plan record; rows: field_row records; fieldRing: [{ lat, lng }] or null.
- * Coordinates are written exactly as stored, so a robot plan keeps its map_hash on re-import.
- */
-export const buildRowPlanGeoJSON = (plan, rows, fieldRing = null) => {
+const planProperties = (plan) => {
   const origin = plan.origin ?? {};
   const params = plan.params ?? {};
   const properties = {
@@ -317,30 +361,120 @@ export const buildRowPlanGeoJSON = (plan, rows, fieldRing = null) => {
   if (plan.supersedes_map_id) properties.supersedes = plan.supersedes_map_id;
   properties.field_location_id = plan.location_id;
   properties.row_plan_id = plan.row_plan_id;
+  properties.field_number = plan.field_number;
+  return properties;
+};
 
-  const features = [];
-  if (Array.isArray(fieldRing) && fieldRing.length >= 3) {
-    const ring = fieldRing.map((p) => [p.lng, p.lat]);
-    features.push({
-      type: 'Feature',
-      properties: { role: 'field' },
-      geometry: { type: 'Polygon', coordinates: [[...ring, ring[0]]] },
-    });
-  }
-  [...rows]
+const fieldFeature = (ring, properties) => {
+  const closed = ring.map((p) => [p.lng, p.lat]);
+  return {
+    type: 'Feature',
+    properties: { role: 'field', ...properties },
+    geometry: { type: 'Polygon', coordinates: [[...closed, closed[0]]] },
+  };
+};
+
+const rowFeatures = (plan, rows, extra = {}) => {
+  const starts = nodeStarts(rows);
+  return [...rows]
     .sort((a, b) => a.position - b.position)
-    .forEach((r) => {
-      features.push({
+    .map((r) => {
+      const start = starts.get(`${r.row_number}/${r.frag}`);
+      return {
         type: 'Feature',
         properties: {
           role: 'row',
           row: r.row_number,
           frag: r.frag,
           row_id: r.row_id,
+          name: rowName(plan.field_number, r.row_number),
+          field: plan.field_number,
+          location_id: plan.location_id,
+          ...extra,
+          node_start: start,
+          node_names: r.line_points.map((_, i) =>
+            nodeName(plan.field_number, r.row_number, start + i),
+          ),
           length_m: Number(r.length),
         },
         geometry: { type: 'LineString', coordinates: r.line_points.map((p) => [p.lng, p.lat]) },
-      });
+      };
     });
-  return { type: 'FeatureCollection', properties, features };
+};
+
+/**
+ * Build the export document for one plan.
+ * plan: row_plan record; rows: field_row records; fieldRing: [{ lat, lng }] or null.
+ * Coordinates are written exactly as stored, so a robot plan keeps its map_hash on re-import.
+ * Rows are named F<field>R<row> and each carries node_names F<field>R<row>N<node>.
+ */
+export const buildRowPlanGeoJSON = (plan, rows, fieldRing = null) => {
+  const features = [];
+  if (Array.isArray(fieldRing) && fieldRing.length >= 3) {
+    features.push(fieldFeature(fieldRing, { field: plan.field_number }));
+  }
+  features.push(...rowFeatures(plan, rows));
+  return { type: 'FeatureCollection', properties: planProperties(plan), features };
+};
+
+/**
+ * Build one document holding the current plan of every field, for export from the farm map.
+ * entries: [{ plan, rows, name, ring }] where name is the field's name and ring its outline ([{ lat, lng }] or null).
+ * The top-level properties list the fields; a file like this is not one field's plan, so it cannot be imported back.
+ * numbering: { fieldNumbers: { [location_id]: number } for every field ever planned, nextFieldNumber }. Without it
+ * both come from the entries.
+ * farmMap: the farm_map record of a published or retired map. The document then names the map (farm_map_id,
+ * farm_map_version, content_hash, ...) and each row carries its farm_map_id.
+ */
+export const buildFarmRowPlanGeoJSON = (entries, numbering = {}, farmMap = null) => {
+  const rowExtra = farmMap ? { farm_map_id: farmMap.farm_map_id } : {};
+  const sorted = [...entries].sort((a, b) => a.plan.field_number - b.plan.field_number);
+  const features = [];
+  const fields = sorted.map(({ plan, rows, name, ring }) => {
+    if (Array.isArray(ring) && ring.length >= 3) {
+      features.push(
+        fieldFeature(ring, {
+          field: plan.field_number,
+          location_id: plan.location_id,
+          field_name: name ?? null,
+        }),
+      );
+    }
+    features.push(...rowFeatures(plan, rows, rowExtra));
+    const { version, ...summary } = planProperties(plan);
+    return {
+      ...summary,
+      field_name: name ?? null,
+      row_count: new Set(rows.map((r) => r.row_number)).size,
+    };
+  });
+  const fieldNumbers =
+    numbering.fieldNumbers ??
+    Object.fromEntries(sorted.map(({ plan }) => [plan.location_id, plan.field_number]));
+  const nextFieldNumber =
+    numbering.nextFieldNumber ?? Math.max(0, ...Object.values(fieldNumbers)) + 1;
+  return {
+    type: 'FeatureCollection',
+    properties: {
+      version: SCHEMA_VERSION,
+      generator: 'litefarm',
+      multi_field: true,
+      ...(farmMap
+        ? {
+            farm_map_id: farmMap.farm_map_id,
+            farm_map_version: farmMap.version,
+            farm_map_name: farmMap.name,
+            season: farmMap.season ?? null,
+            status: farmMap.status,
+            previous_farm_map_id: farmMap.previous_farm_map_id ?? null,
+            content_hash: farmMap.content_hash,
+            published_at: farmMap.published_at,
+          }
+        : {}),
+      fields,
+      field_numbers: fieldNumbers,
+      next_field_number: nextFieldNumber,
+    },
+    features,
+  };
 };

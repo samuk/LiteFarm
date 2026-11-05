@@ -28,6 +28,13 @@ router.post(
 );
 
 router.get(
+  '/farm/:farm_id/geojson',
+  hasFarmAccess({ params: 'farm_id' }),
+  checkScope(['get:row_plan']),
+  rowPlanController.exportFarmRowPlans(),
+);
+
+router.get(
   '/farm/:farm_id',
   hasFarmAccess({ params: 'farm_id' }),
   checkScope(['get:row_plan']),

@@ -17,6 +17,7 @@ import { configureStore } from '@reduxjs/toolkit';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../store/api/apiSlice';
 import { rowPlanApi } from '../store/api/rowPlanApi';
+import { farmMapApi } from '../store/api/farmMapApi';
 
 // Uses the real api slice (and its 'content-type' response handler) with only fetch stubbed, because
 // the API serves plan exports as application/geo+json, which RTK Query does not treat as JSON.
@@ -127,5 +128,70 @@ describe('task rows', () => {
     expect(JSON.parse(put?.body ?? '{}')).toEqual({ row_plan_id: 'plan-1', row_numbers: [12, 13] });
     await vi.waitFor(() => expect(calls.filter((c) => c.method === 'GET')).toHaveLength(2));
     subscription.unsubscribe();
+  });
+});
+
+describe('farm map api', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('finds the published map and loads its plans', async () => {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) => {
+        urls.push(`${request.method} ${new URL(request.url).pathname}`);
+        return request.url.endsWith('/farm_map/farm/farm')
+          ? json(
+              [
+                { farm_map_id: 'draft', status: 'draft' },
+                { farm_map_id: 'live', status: 'published' },
+              ],
+              'application/json',
+            )
+          : json({ farm_map_id: 'live', status: 'published', plans: [{ location_id: 'f1' }] }, 'application/json');
+      }),
+    );
+    const store = makeStore();
+    const result = await store.dispatch(
+      farmMapApi.endpoints.getPublishedFarmMap.initiate({ farm_id: 'farm' }),
+    );
+    expect(result.data?.plans[0].location_id).toBe('f1');
+    expect(urls).toEqual(['GET /farm_map/farm/farm', 'GET /farm_map/live']);
+  });
+
+  it('returns null when nothing is published', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => json([{ farm_map_id: 'd', status: 'draft' }], 'application/json')));
+    const result = await makeStore().dispatch(
+      farmMapApi.endpoints.getPublishedFarmMap.initiate({ farm_id: 'farm' }),
+    );
+    expect(result.data).toBeNull();
+  });
+
+  it('deletes the draft when publishing fails', async () => {
+    const calls: string[] = [];
+    const bodies: any[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: Request) => {
+        const path = new URL(request.url).pathname;
+        calls.push(`${request.method} ${path}`);
+        if (request.method === 'POST' && path === '/farm_map') {
+          bodies.push(await request.json());
+          return json({ farm_map: { farm_map_id: 'd1' }, plans: [] }, 'application/json');
+        }
+        if (path.endsWith('/publish'))
+          return new Response(JSON.stringify({ error: 'plans have been replaced' }), {
+            status: 409,
+            headers: { 'content-type': 'application/json' },
+          });
+        return new Response(null, { status: 204 });
+      }),
+    );
+    const result = await makeStore().dispatch(
+      farmMapApi.endpoints.publishFarmMap.initiate({ farm_id: 'farm', name: 'Map' }),
+    );
+    expect('error' in result).toBe(true);
+    expect(bodies[0]).toMatchObject({ farm_id: 'farm', name: 'Map' });
+    expect(calls).toEqual(['POST /farm_map', 'POST /farm_map/d1/publish', 'DELETE /farm_map/d1']);
   });
 });

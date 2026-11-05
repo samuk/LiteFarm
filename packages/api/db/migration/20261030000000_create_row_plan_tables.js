@@ -88,20 +88,20 @@ export const up = async function (knex) {
     t.index(['row_id']);
   });
 
-  // 196 get:row_plan for everyone who can see tasks, 197 edit:row_plan for owners, managers and extension officers.
+  // 199 get:row_plan for everyone who can see tasks, 200 edit:row_plan for owners, managers and extension officers.
   // Task-row changes use the existing get:task and edit:task scopes.
   await knex('permissions').insert([
-    { permission_id: 196, name: 'get:row_plan', description: 'get row plans' },
-    { permission_id: 197, name: 'edit:row_plan', description: 'import and supersede row plans' },
+    { permission_id: 199, name: 'get:row_plan', description: 'get row plans' },
+    { permission_id: 200, name: 'edit:row_plan', description: 'import and supersede row plans' },
   ]);
   await knex('rolePermissions').insert([
-    { role_id: 1, permission_id: 196 },
-    { role_id: 2, permission_id: 196 },
-    { role_id: 3, permission_id: 196 },
-    { role_id: 5, permission_id: 196 },
-    { role_id: 1, permission_id: 197 },
-    { role_id: 2, permission_id: 197 },
-    { role_id: 5, permission_id: 197 },
+    { role_id: 1, permission_id: 199 },
+    { role_id: 2, permission_id: 199 },
+    { role_id: 3, permission_id: 199 },
+    { role_id: 5, permission_id: 199 },
+    { role_id: 1, permission_id: 200 },
+    { role_id: 2, permission_id: 200 },
+    { role_id: 5, permission_id: 200 },
   ]);
 };
 
@@ -110,8 +110,8 @@ export const up = async function (knex) {
  * @returns { Promise<void> }
  */
 export const down = async function (knex) {
-  await knex('rolePermissions').whereIn('permission_id', [196, 197]).del();
-  await knex('permissions').whereIn('permission_id', [196, 197]).del();
+  await knex('rolePermissions').whereIn('permission_id', [199, 200]).del();
+  await knex('permissions').whereIn('permission_id', [199, 200]).del();
   await knex.schema.dropTable('task_row');
   await knex.schema.dropTable('field_row');
   await knex.schema.dropTable('row_plan');

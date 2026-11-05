@@ -34,11 +34,19 @@ export const IMAGERY_TILE_URL: string =
 
 export const IMAGERY_ATTRIBUTION: string = env.VITE_MAP_IMAGERY_ATTRIBUTION || 'Esri';
 
+// Font glyphs for map text such as row and node names. The default is MapLibre's public demo font
+// server, which is not meant for production traffic: point this at your own glyph host before relying on it.
+export const GLYPHS_URL: string =
+  env.VITE_MAP_GLYPHS_URL || 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf';
+
+export const MAP_LABEL_FONT = ['Open Sans Regular', 'Arial Unicode MS Regular'];
+
 export const IMAGERY_MAX_ZOOM: number = Number(env.VITE_MAP_IMAGERY_MAXZOOM) || 19;
 
 /** MapLibre style with the configured raster imagery over a plain background. */
 export const buildImageryStyle = () => ({
   version: 8 as const,
+  glyphs: GLYPHS_URL,
   sources: {
     imagery: {
       type: 'raster' as const,
