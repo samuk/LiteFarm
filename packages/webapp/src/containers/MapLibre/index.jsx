@@ -404,7 +404,15 @@ export default function MapLibreMap({ isCompactSideMenu }) {
     );
   };
 
-  const errorText = (error) => error?.data?.error ?? error?.error ?? error?.message ?? String(error);
+  // The api answers with JSON ({ error }) or, from its permission checks, plain text.
+  const errorText = (error) => {
+    const data = error?.data;
+    const detail = typeof data === 'string' ? data.trim().slice(0, 200) : data?.error;
+    const text = typeof detail === 'string' && detail ? detail : (error?.error ?? error?.message);
+    const status = error?.status;
+    if (typeof text === 'string' && text) return typeof status === 'number' ? `${status}: ${text}` : text;
+    return typeof status === 'number' ? `HTTP ${status}` : 'unknown error';
+  };
 
   const handlePublishMap = async ({ name, season }) => {
     setMapError(null);
