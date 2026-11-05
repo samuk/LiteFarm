@@ -71,7 +71,8 @@ export const lineLengthMetres = (points) =>
  * in fragment order, so every node name in a field is unique.
  */
 export const rowName = (fieldNumber, rowNumber) => `F${fieldNumber}R${rowNumber}`;
-export const nodeName = (fieldNumber, rowNumber, node) => `${rowName(fieldNumber, rowNumber)}N${node}`;
+export const nodeName = (fieldNumber, rowNumber, node) =>
+  `${rowName(fieldNumber, rowNumber)}N${node}`;
 
 /** Map of `${row_number}/${frag}` to the number of the fragment's first node. */
 export const nodeStarts = (rows) => {
@@ -255,6 +256,22 @@ export const canonicalRowsText = (rows) =>
 export const computeMapHash = (rows) =>
   createHash('sha256').update(canonicalRowsText(rows), 'utf8').digest('hex');
 
+/**
+ * Canonical text of a farm map: the canonical rows of every field, ordered by field number:
+ *   [[field_number,<canonical rows>],...]
+ * Row names come from the field number and row number, so the hash covers the names a robot will use.
+ * entries: [{ field_number, rows }]
+ */
+export const canonicalFarmMapText = (entries) =>
+  `[${[...entries]
+    .sort((a, b) => a.field_number - b.field_number)
+    .map((e) => `[${e.field_number},${canonicalRowsText(e.rows)}]`)
+    .join(',')}]`;
+
+/** SHA-256 of the canonical farm map text, lower-case hex. Covers geometry, order and field numbers only. */
+export const computeFarmMapHash = (entries) =>
+  createHash('sha256').update(canonicalFarmMapText(entries), 'utf8').digest('hex');
+
 // Local planar projection in metres, good enough for a field.
 const projector = (origin) => {
   const kLat = (Math.PI / 180) * EARTH_RADIUS_M;
@@ -357,7 +374,7 @@ const fieldFeature = (ring, properties) => {
   };
 };
 
-const rowFeatures = (plan, rows) => {
+const rowFeatures = (plan, rows, extra = {}) => {
   const starts = nodeStarts(rows);
   return [...rows]
     .sort((a, b) => a.position - b.position)
@@ -373,8 +390,11 @@ const rowFeatures = (plan, rows) => {
           name: rowName(plan.field_number, r.row_number),
           field: plan.field_number,
           location_id: plan.location_id,
+          ...extra,
           node_start: start,
-          node_names: r.line_points.map((_, i) => nodeName(plan.field_number, r.row_number, start + i)),
+          node_names: r.line_points.map((_, i) =>
+            nodeName(plan.field_number, r.row_number, start + i),
+          ),
           length_m: Number(r.length),
         },
         geometry: { type: 'LineString', coordinates: r.line_points.map((p) => [p.lng, p.lat]) },
@@ -403,8 +423,11 @@ export const buildRowPlanGeoJSON = (plan, rows, fieldRing = null) => {
  * The top-level properties list the fields; a file like this is not one field's plan, so it cannot be imported back.
  * numbering: { fieldNumbers: { [location_id]: number } for every field ever planned, nextFieldNumber }. Without it
  * both come from the entries.
+ * farmMap: the farm_map record of a published or retired map. The document then names the map (farm_map_id,
+ * farm_map_version, content_hash, ...) and each row carries its farm_map_id.
  */
-export const buildFarmRowPlanGeoJSON = (entries, numbering = {}) => {
+export const buildFarmRowPlanGeoJSON = (entries, numbering = {}, farmMap = null) => {
+  const rowExtra = farmMap ? { farm_map_id: farmMap.farm_map_id } : {};
   const sorted = [...entries].sort((a, b) => a.plan.field_number - b.plan.field_number);
   const features = [];
   const fields = sorted.map(({ plan, rows, name, ring }) => {
@@ -417,7 +440,7 @@ export const buildFarmRowPlanGeoJSON = (entries, numbering = {}) => {
         }),
       );
     }
-    features.push(...rowFeatures(plan, rows));
+    features.push(...rowFeatures(plan, rows, rowExtra));
     const { version, ...summary } = planProperties(plan);
     return {
       ...summary,
@@ -436,6 +459,18 @@ export const buildFarmRowPlanGeoJSON = (entries, numbering = {}) => {
       version: SCHEMA_VERSION,
       generator: 'litefarm',
       multi_field: true,
+      ...(farmMap
+        ? {
+            farm_map_id: farmMap.farm_map_id,
+            farm_map_version: farmMap.version,
+            farm_map_name: farmMap.name,
+            season: farmMap.season ?? null,
+            status: farmMap.status,
+            previous_farm_map_id: farmMap.previous_farm_map_id ?? null,
+            content_hash: farmMap.content_hash,
+            published_at: farmMap.published_at,
+          }
+        : {}),
       fields,
       field_numbers: fieldNumbers,
       next_field_number: nextFieldNumber,

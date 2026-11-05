@@ -54,7 +54,7 @@ const getFieldArea = (farm_id, location_id) =>
     .whereIn('figure.type', ['field', 'garden'])
     .first('location.location_id', 'area.grid_points');
 
-const getFieldAreas = (farm_id, location_ids) =>
+export const getFieldAreas = (farm_id, location_ids) =>
   Model.knex()('location')
     .join('figure', 'figure.location_id', 'location.location_id')
     .join('area', 'area.figure_id', 'figure.figure_id')
@@ -82,6 +82,20 @@ const fieldNumberFor = async (trx, farm_id, location_id) => {
 
 const getLivePlan = (farm_id, row_plan_id) =>
   RowPlanModel.query().whereNotDeleted().where({ farm_id, row_plan_id }).first();
+
+/** A plan in a published farm map is part of what the robots were given: it can only change in a new map version. */
+const assertNotInPublishedMap = async (trx, row_plan_id) => {
+  const map = await trx('farm_map_row_plan as m')
+    .join('farm_map as f', 'f.farm_map_id', 'm.farm_map_id')
+    .where({ 'm.row_plan_id': row_plan_id, 'f.status': 'published', 'f.deleted': false })
+    .first('f.name', 'f.version');
+  if (map) {
+    throw new RowPlanError(
+      `this plan is in the published farm map "${map.name}" (version ${map.version}); make a new version of the map to change it`,
+      409,
+    );
+  }
+};
 
 /**
  * Rows on a task can be set by owners, managers and extension officers, or by the worker the task is assigned to.
@@ -178,7 +192,10 @@ const rowPlanController = {
 
         trx = await transaction.start(Model.knex());
         // Two fields saved at once must not take the same number.
-        await trx.raw('SELECT pg_advisory_xact_lock(hashtext(?))', [`row_plan_field_number:${farm_id}`]);
+        await trx.raw('SELECT pg_advisory_xact_lock(hashtext(?))', [
+          `row_plan_field_number:${farm_id}`,
+        ]);
+        if (superseded) await assertNotInPublishedMap(trx, superseded.row_plan_id);
         const field_number = await fieldNumberFor(trx, farm_id, location_id);
         const row_plan = await RowPlanModel.query(trx)
           .context(context)
@@ -566,6 +583,7 @@ const rowPlanController = {
         const plan = await getLivePlan(farm_id, req.params.row_plan_id);
         if (!plan) return res.sendStatus(404);
         trx = await transaction.start(Model.knex());
+        await assertNotInPublishedMap(trx, plan.row_plan_id);
         const used = await trx('task_row')
           .join('field_row', 'field_row.row_id', 'task_row.row_id')
           .where({ 'field_row.row_plan_id': plan.row_plan_id })

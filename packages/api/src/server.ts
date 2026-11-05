@@ -167,6 +167,7 @@ import farmTokenRoute from './routes/farmTokenRoute.js';
 import documentRoute from './routes/documentRoute.js';
 import taskRoute from './routes/taskRoute.js';
 import rowPlanRoute from './routes/rowPlanRoute.js';
+import farmMapRoute from './routes/farmMapRoute.js';
 import productRoute from './routes/productRoute.js';
 import notificationUserRoute from './routes/notificationUserRoute.js';
 import timeNotificationRoute from './routes/timeNotificationRoute.js';
@@ -363,6 +364,7 @@ app
   .use('/document', documentRoute)
   .use('/task', taskRoute)
   .use('/row_plan', express.json({ limit: '5MB' }), rowPlanRoute)
+  .use('/farm_map', farmMapRoute)
   .use('/product', productRoute)
   .use('/nomination', nominationRoutes)
   .use('/notification_user', notificationUserRoute)

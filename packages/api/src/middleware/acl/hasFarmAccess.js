@@ -31,6 +31,7 @@ const entitiesGetters = {
   product_id: fromProductFarm,
   submission_id: fromSurveyResponse,
   row_plan_id: fromRowPlan,
+  farm_map_id: fromFarmMap,
 };
 import userFarmModel from '../../models/userFarmModel.js';
 
@@ -194,6 +195,10 @@ function fromDisease(disease_id) {
 
 function fromRowPlan(row_plan_id) {
   return knex('row_plan').where({ row_plan_id }).first();
+}
+
+function fromFarmMap(farm_map_id) {
+  return knex('farm_map').where({ farm_map_id }).first();
 }
 
 function fromLocation(location_id) {
