@@ -50,6 +50,16 @@ export default function RowPlannerControl({
   onPublishMap,
   onRetireMap,
   onDownloadMap,
+  mapFeatures = [],
+  featurePlacing = null,
+  routePointCount = 0,
+  featureErrorKey = null,
+  onAddDock,
+  onAddRoute,
+  onFinishRoute,
+  onCancelPlacing,
+  onRemoveFeature,
+  onDockHeading,
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -251,6 +261,104 @@ export default function RowPlannerControl({
                       })
                     : t(prefix + 'FARM_MAP.NONE')}
                 </p>
+                <div className={styles.features} data-cy="farm-map-features">
+                  <h4 className={styles.heading}>{t(prefix + 'FEATURES.TITLE')}</h4>
+                  {mapFeatures.length === 0 ? (
+                    <p className={styles.note}>{t(prefix + 'FEATURES.NONE')}</p>
+                  ) : (
+                    <ul className={styles.featureList}>
+                      {mapFeatures.map((feature) => (
+                        <li key={feature.name} className={styles.featureItem}>
+                          <span>
+                            {feature.kind === 'dock'
+                              ? t(prefix + 'FEATURES.DOCK', { name: feature.name })
+                              : t(prefix + 'FEATURES.ROUTE', {
+                                  name: feature.name,
+                                  from: feature.from_node,
+                                  to: feature.to_node,
+                                  count: Math.max(0, feature.points.length - 2),
+                                })}
+                          </span>
+                          {feature.kind === 'dock' && (
+                            <input
+                              type="number"
+                              min={0}
+                              max={359}
+                              step={1}
+                              className={styles.heading_input}
+                              aria-label={t(prefix + 'FEATURES.HEADING', { name: feature.name })}
+                              value={feature.heading_deg ?? ''}
+                              disabled={isMapBusy}
+                              onChange={(event) => onDockHeading?.(feature.name, event.target.value)}
+                            />
+                          )}
+                          <button
+                            type="button"
+                            className={styles.button}
+                            aria-label={t(prefix + 'FEATURES.REMOVE', { name: feature.name })}
+                            disabled={isMapBusy}
+                            onClick={() => onRemoveFeature?.(feature.name)}
+                          >
+                            {t(prefix + 'FEATURES.REMOVE_SHORT')}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {featurePlacing === 'dock' && (
+                    <p className={styles.result} role="status">
+                      {t(prefix + 'FEATURES.PLACING_DOCK')}
+                    </p>
+                  )}
+                  {featurePlacing === 'route' && (
+                    <p className={styles.result} role="status">
+                      {t(prefix + 'FEATURES.PLACING_ROUTE', { count: routePointCount })}
+                    </p>
+                  )}
+                  {featureErrorKey && (
+                    <p className={styles.error} role="alert">
+                      {t(prefix + 'FEATURES.ERRORS.' + featureErrorKey)}
+                    </p>
+                  )}
+                  <div className={styles.actions}>
+                    {!featurePlacing && (
+                      <>
+                        <button
+                          type="button"
+                          className={styles.button}
+                          disabled={isMapBusy}
+                          onClick={onAddDock}
+                        >
+                          {t(prefix + 'FEATURES.ADD_DOCK')}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.button}
+                          disabled={isMapBusy}
+                          onClick={onAddRoute}
+                        >
+                          {t(prefix + 'FEATURES.ADD_ROUTE')}
+                        </button>
+                      </>
+                    )}
+                    {featurePlacing === 'route' && (
+                      <button
+                        type="button"
+                        className={styles.button}
+                        disabled={routePointCount < 2}
+                        onClick={onFinishRoute}
+                      >
+                        {t(prefix + 'FEATURES.FINISH_ROUTE')}
+                      </button>
+                    )}
+                    {featurePlacing && (
+                      <button type="button" className={styles.button} onClick={onCancelPlacing}>
+                        {t(prefix + 'FEATURES.CANCEL')}
+                      </button>
+                    )}
+                  </div>
+                  <p className={styles.note}>{t(prefix + 'FEATURES.NOTE')}</p>
+                </div>
                 <label className={styles.field}>
                   {t(prefix + 'FARM_MAP.NAME')}
                   <input
@@ -375,4 +483,20 @@ RowPlannerControl.propTypes = {
   onPublishMap: PropTypes.func,
   onRetireMap: PropTypes.func,
   onDownloadMap: PropTypes.func,
+  mapFeatures: PropTypes.arrayOf(
+    PropTypes.shape({
+      kind: PropTypes.oneOf(['dock', 'route']).isRequired,
+      name: PropTypes.string.isRequired,
+      points: PropTypes.array.isRequired,
+    }),
+  ),
+  featurePlacing: PropTypes.oneOf(['dock', 'route']),
+  routePointCount: PropTypes.number,
+  featureErrorKey: PropTypes.string,
+  onAddDock: PropTypes.func,
+  onAddRoute: PropTypes.func,
+  onFinishRoute: PropTypes.func,
+  onCancelPlacing: PropTypes.func,
+  onRemoveFeature: PropTypes.func,
+  onDockHeading: PropTypes.func,
 };

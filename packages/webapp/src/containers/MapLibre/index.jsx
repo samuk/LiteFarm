@@ -17,7 +17,7 @@
 // Drawing and editing of new locations is in ./useMapLibreDrawing. Marker clustering, dashed
 // outlines and road view are not ported yet.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -108,6 +108,17 @@ import {
   useRetireFarmMapMutation,
 } from '../../store/api/farmMapApi';
 import useRowPlan from './useRowPlan';
+import useFarmMapFeatures from './useFarmMapFeatures';
+import {
+  buildRoute,
+  dockNodesOf,
+  featuresToCollection,
+  nextDockName,
+  nextRouteName,
+  removeFeature,
+  rowNodesOf,
+  toApiFeatures,
+} from '../../util/farmMapFeatures';
 import RowPlannerControl from '../../components/Map/RowPlannerControl';
 
 const FALLBACK_COLOUR = '#666666';
@@ -182,6 +193,7 @@ export default function MapLibreMap({ isCompactSideMenu }) {
   const hasFittedRef = useRef(false);
   const hoveredIdRef = useRef(null);
   const drawingActiveRef = useRef(false);
+  const placingRef = useRef(null);
   const hasRestoredRef = useRef(false);
 
   const system = useSelector(measurementSelector);
@@ -331,6 +343,70 @@ export default function MapLibreMap({ isCompactSideMenu }) {
   });
   useEffect(() => () => plannerRef.current?.terminate(), []);
 
+  // Docks and routes of the farm map being built. They start as the published map's and are sent to the api
+  // with the next publish, which makes a new map version.
+  const [mapFeatures, setMapFeatures] = useState([]);
+  const [featurePlacing, setFeaturePlacing] = useState(null);
+  const [routePoints, setRoutePoints] = useState([]);
+  const [featureErrorKey, setFeatureErrorKey] = useState(null);
+  placingRef.current = featurePlacing;
+  useEffect(() => {
+    if (publishedMap?.features) setMapFeatures(publishedMap.features);
+  }, [publishedMap]);
+  const featureCollection = useMemo(() => featuresToCollection(mapFeatures), [mapFeatures]);
+  // The api checks route ends against the saved plans, so those are the nodes a route can join.
+  const savedRowNodes = useMemo(() => rowNodesOf(farmPlans), [farmPlans]);
+
+  const handleFeaturePlace = useCallback(
+    (point) => {
+      if (drawingActiveRef.current) return;
+      setFeatureErrorKey(null);
+      if (featurePlacing === 'dock') {
+        setMapFeatures((features) => [
+          ...features,
+          { kind: 'dock', name: nextDockName(features), points: [point], heading_deg: null },
+        ]);
+        setFeaturePlacing(null);
+      } else if (featurePlacing === 'route') {
+        setRoutePoints((points) => [...points, point]);
+      }
+    },
+    [featurePlacing],
+  );
+  useFarmMapFeatures({
+    map: mapReady ? mapRef.current : null,
+    collection: featureCollection,
+    draftPoints: routePoints,
+    placing: featurePlacing,
+    onPlace: handleFeaturePlace,
+  });
+
+  const startPlacing = (kind) => {
+    setFeaturePlacing(kind);
+    setRoutePoints([]);
+    setFeatureErrorKey(null);
+  };
+  const cancelPlacing = () => startPlacing(null);
+  const finishRoute = () => {
+    const result = buildRoute(nextRouteName(mapFeatures), routePoints, [
+      ...savedRowNodes,
+      ...dockNodesOf(mapFeatures),
+    ]);
+    if ('error' in result) {
+      setFeatureErrorKey(result.error);
+      return;
+    }
+    setMapFeatures((features) => [...features, result.route]);
+    cancelPlacing();
+  };
+  const handleDockHeading = (name, text) => {
+    const heading = text === '' ? null : Number(text);
+    if (heading !== null && !(Number.isInteger(heading) && heading >= 0 && heading < 360)) return;
+    setMapFeatures((features) =>
+      features.map((f) => (f.kind === 'dock' && f.name === name ? { ...f, heading_deg: heading } : f)),
+    );
+  };
+
   const handlePlanFieldChange = (id) => {
     setPlanFieldId(id);
     setPlan(null);
@@ -417,7 +493,12 @@ export default function MapLibreMap({ isCompactSideMenu }) {
   const handlePublishMap = async ({ name, season }) => {
     setMapError(null);
     try {
-      await publishFarmMap({ farm_id, name, season }).unwrap();
+      await publishFarmMap({
+        farm_id,
+        name,
+        season,
+        features: toApiFeatures(mapFeatures),
+      }).unwrap();
     } catch (error) {
       setMapError(errorText(error));
     }
@@ -532,7 +613,7 @@ export default function MapLibreMap({ isCompactSideMenu }) {
 
       const clickable = [...AREA_LAYERS, ...LINE_LAYERS];
       map.on('click', (e) => {
-        if (e.defaultPrevented || drawingActiveRef.current) return;
+        if (e.defaultPrevented || drawingActiveRef.current || placingRef.current) return;
         const hits = map
           .queryRenderedFeatures(e.point, { layers: clickable })
           .map((f) => f.properties);
@@ -834,6 +915,16 @@ export default function MapLibreMap({ isCompactSideMenu }) {
               onPublishMap={handlePublishMap}
               onRetireMap={handleRetireMap}
               onDownloadMap={handleDownloadMap}
+              mapFeatures={mapFeatures}
+              featurePlacing={featurePlacing}
+              routePointCount={routePoints.length}
+              featureErrorKey={featureErrorKey}
+              onAddDock={() => startPlacing('dock')}
+              onAddRoute={() => startPlacing('route')}
+              onFinishRoute={finishRoute}
+              onCancelPlacing={cancelPlacing}
+              onRemoveFeature={(name) => setMapFeatures((features) => removeFeature(features, name))}
+              onDockHeading={handleDockHeading}
             />
           )}
           {drawingState.type && (

@@ -98,3 +98,31 @@
   font-size: 14px;
   font-weight: 600;
 }
+
+.features {
+  margin: 8px 0;
+  padding-top: 8px;
+  border-top: 1px dashed #d4dae4;
+}
+
+.featureList {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.featureItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+  font-size: 13px;
+
+  > span {
+    flex: 1;
+  }
+}
+
+.heading_input {
+  width: 56px;
+}

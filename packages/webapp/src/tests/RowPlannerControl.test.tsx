@@ -208,3 +208,72 @@ describe('RowPlannerControl', () => {
     });
   });
 });
+
+describe('docks and routes', () => {
+  const dock = {
+    kind: 'dock',
+    name: 'dock',
+    points: [{ lat: 1, lng: 2 }],
+    heading_deg: 90,
+  };
+  const route = {
+    kind: 'route',
+    name: 'route1',
+    from_node: 'dock',
+    to_node: 'F1R0N0',
+    points: [
+      { lat: 1, lng: 2 },
+      { lat: 1.1, lng: 2.1 },
+      { lat: 1.2, lng: 2.2 },
+    ],
+  };
+  const feature = 'FARM_MAP.ROW_PLANNER.FEATURES.';
+
+  it('lists docks and routes and can remove one or set a heading', () => {
+    const { onRemoveFeature, onDockHeading } = setup({
+      mapFeatures: [dock, route],
+      onRemoveFeature: vi.fn(),
+      onDockHeading: vi.fn(),
+    });
+    expect(screen.getByText(new RegExp(`${feature}DOCK .*"dock"`))).toBeTruthy();
+    expect(screen.getByText(new RegExp(`${feature}ROUTE .*"count":1`))).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', { name: new RegExp(`${feature}REMOVE .*"route1"`) }),
+    );
+    expect(onRemoveFeature).toHaveBeenCalledWith('route1');
+    fireEvent.change(screen.getByRole('spinbutton', { name: new RegExp(`${feature}HEADING`) }), {
+      target: { value: '180' },
+    });
+    expect(onDockHeading).toHaveBeenCalledWith('dock', '180');
+  });
+
+  it('starts a dock or a route from the add buttons', () => {
+    const { onAddDock, onAddRoute } = setup({ onAddDock: vi.fn(), onAddRoute: vi.fn() });
+    expect(screen.getByText(`${feature}NONE`)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: `${feature}ADD_DOCK` }));
+    fireEvent.click(screen.getByRole('button', { name: `${feature}ADD_ROUTE` }));
+    expect(onAddDock).toHaveBeenCalledTimes(1);
+    expect(onAddRoute).toHaveBeenCalledTimes(1);
+  });
+
+  it('while placing a route, finishing needs two points and the add buttons are hidden', () => {
+    const { onFinishRoute, onCancelPlacing } = setup({
+      featurePlacing: 'route',
+      routePointCount: 1,
+      onFinishRoute: vi.fn(),
+      onCancelPlacing: vi.fn(),
+    });
+    expect(screen.queryByRole('button', { name: `${feature}ADD_DOCK` })).toBeNull();
+    const finish = screen.getByRole('button', { name: `${feature}FINISH_ROUTE` });
+    expect((finish as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: `${feature}CANCEL` }));
+    expect(onCancelPlacing).toHaveBeenCalledTimes(1);
+    expect(onFinishRoute).not.toHaveBeenCalled();
+  });
+
+  it('shows why a route was refused', () => {
+    setup({ featurePlacing: 'route', routePointCount: 2, featureErrorKey: 'START' });
+    expect(screen.getByRole('alert').textContent).toBe(`${feature}ERRORS.START`);
+  });
+});
+

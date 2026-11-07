@@ -15,6 +15,7 @@
 
 import { api } from './apiSlice';
 import { farmMapUrl } from '../../apiConfig';
+import type { MapFeature } from '../../util/farmMapFeatures';
 
 export type FarmMapStatus = 'draft' | 'published' | 'retired';
 
@@ -40,12 +41,14 @@ export interface FarmMapPlan {
   row_count: number;
 }
 
-export type FarmMapWithPlans = FarmMap & { plans: FarmMapPlan[] };
+export type FarmMapWithPlans = FarmMap & { plans: FarmMapPlan[]; features?: MapFeature[] };
 
 export interface PublishFarmMapArgs {
   farm_id: string;
   name: string;
   season?: string;
+  // Docks and routes for the new map. Leave out for none.
+  features?: ReturnType<typeof import('../../util/farmMapFeatures').toApiFeatures>;
 }
 
 // A farm has at most one published map. A plan in it is frozen: the api refuses to supersede or delete it
@@ -64,10 +67,10 @@ export const farmMapApi = api.injectEndpoints({
       },
       providesTags: ['FarmMaps'],
     }),
-    // Puts the current plan of every field in a new map version and publishes it, which retires the
-    // previous published map. A draft left behind by a failed publish is deleted again.
+    // Puts the current plan of every field, and the docks and routes, in a new map version and publishes it, which
+    // retires the previous published map. A draft left behind by a failed publish is deleted again.
     publishFarmMap: build.mutation<FarmMapWithPlans, PublishFarmMapArgs>({
-      async queryFn({ farm_id, name, season }, _api, _extraOptions, baseQuery) {
+      async queryFn({ farm_id, name, season, features }, _api, _extraOptions, baseQuery) {
         const created = await baseQuery({
           url: farmMapUrl,
           method: 'POST',
@@ -76,10 +79,19 @@ export const farmMapApi = api.injectEndpoints({
         });
         if (created.error) return { error: created.error };
         const { farm_map } = created.data as { farm_map: FarmMap };
-        const published = await baseQuery({
-          url: `${farmMapUrl}/${farm_map.farm_map_id}/publish`,
-          method: 'POST',
-        });
+        const featuresSaved = features?.length
+          ? await baseQuery({
+              url: `${farmMapUrl}/${farm_map.farm_map_id}/features`,
+              method: 'PUT',
+              body: { features },
+            })
+          : null;
+        const published = featuresSaved?.error
+          ? featuresSaved
+          : await baseQuery({
+              url: `${farmMapUrl}/${farm_map.farm_map_id}/publish`,
+              method: 'POST',
+            });
         if (published.error) {
           await baseQuery({ url: `${farmMapUrl}/${farm_map.farm_map_id}`, method: 'DELETE' });
           return { error: published.error };

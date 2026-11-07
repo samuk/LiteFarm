@@ -194,4 +194,59 @@ describe('farm map api', () => {
     expect(bodies[0]).toMatchObject({ farm_id: 'farm', name: 'Map' });
     expect(calls).toEqual(['POST /farm_map', 'POST /farm_map/d1/publish', 'DELETE /farm_map/d1']);
   });
+
+  describe('with docks and routes', () => {
+    const dock = { kind: 'dock' as const, name: 'dock', points: [{ lat: 1, lng: 2 }], heading_deg: 90 };
+
+    const stubFetch = (calls: string[], bodies: any[], featuresStatus = 200) =>
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (request: Request) => {
+          const path = new URL(request.url).pathname;
+          calls.push(`${request.method} ${path}`);
+          if (request.method === 'POST' && path === '/farm_map')
+            return json({ farm_map: { farm_map_id: 'd1' }, plans: [] }, 'application/json');
+          if (path.endsWith('/features')) {
+            bodies.push(await request.json());
+            return new Response(JSON.stringify(featuresStatus === 200 ? {} : { error: 'bad route' }), {
+              status: featuresStatus,
+              headers: { 'content-type': 'application/json' },
+            });
+          }
+          if (path.endsWith('/publish')) return json({ farm_map_id: 'd1', plans: [] }, 'application/json');
+          return new Response(null, { status: 204 });
+        }),
+      );
+
+    it('saves them on the draft before publishing it', async () => {
+      const calls: string[] = [];
+      const bodies: any[] = [];
+      stubFetch(calls, bodies);
+      const result = await makeStore().dispatch(
+        farmMapApi.endpoints.publishFarmMap.initiate({ farm_id: 'farm', name: 'Map', features: [dock] }),
+      );
+      expect('error' in result).toBe(false);
+      expect(bodies[0]).toEqual({ features: [dock] });
+      expect(calls).toEqual(['POST /farm_map', 'PUT /farm_map/d1/features', 'POST /farm_map/d1/publish']);
+    });
+
+    it('deletes the draft and does not publish if they are refused', async () => {
+      const calls: string[] = [];
+      stubFetch(calls, [], 400);
+      const result = await makeStore().dispatch(
+        farmMapApi.endpoints.publishFarmMap.initiate({ farm_id: 'farm', name: 'Map', features: [dock] }),
+      );
+      expect('error' in result).toBe(true);
+      expect(calls).toEqual(['POST /farm_map', 'PUT /farm_map/d1/features', 'DELETE /farm_map/d1']);
+    });
+
+    it('makes no features call when there are none', async () => {
+      const calls: string[] = [];
+      stubFetch(calls, []);
+      await makeStore().dispatch(
+        farmMapApi.endpoints.publishFarmMap.initiate({ farm_id: 'farm', name: 'Map', features: [] }),
+      );
+      expect(calls).toEqual(['POST /farm_map', 'POST /farm_map/d1/publish']);
+    });
+  });
 });
