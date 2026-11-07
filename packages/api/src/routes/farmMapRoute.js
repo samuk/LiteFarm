@@ -65,6 +65,13 @@ router.put(
   farmMapController.setFarmMapPlans(),
 );
 
+router.put(
+  '/:farm_map_id/features',
+  hasFarmAccess({ params: 'farm_map_id' }),
+  checkScope(['edit:row_plan']),
+  farmMapController.setFarmMapFeatures(),
+);
+
 router.post(
   '/:farm_map_id/publish',
   hasFarmAccess({ params: 'farm_map_id' }),

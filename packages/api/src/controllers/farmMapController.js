@@ -18,7 +18,13 @@ import FarmMapModel from '../models/farmMapModel.js';
 import RowPlanModel from '../models/rowPlanModel.js';
 import FieldRowModel from '../models/fieldRowModel.js';
 import { getFieldAreas } from './rowPlanController.js';
-import { RowPlanError, computeFarmMapHash, buildFarmRowPlanGeoJSON } from '../util/rowPlan.js';
+import {
+  RowPlanError,
+  computeFarmMapHash,
+  buildFarmRowPlanGeoJSON,
+  validateFarmMapFeatures,
+  checkRouteEnds,
+} from '../util/rowPlan.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const UNIQUE_VIOLATION = '23505';
@@ -120,6 +126,23 @@ const getMembers = (farm_map_id, trx = Model.knex()) =>
       ),
     );
 
+/** Docks and routes of a map, in the shape the hash and the export use. */
+const getFeatures = async (farm_map_id, trx = Model.knex()) =>
+  (
+    await trx('farm_map_feature')
+      .where({ farm_map_id })
+      .orderBy([{ column: 'kind' }, { column: 'name' }])
+      .select('kind', 'name', 'points', 'heading_deg', 'from_node', 'to_node')
+  ).map((f) => ({ ...f, points: typeof f.points === 'string' ? JSON.parse(f.points) : f.points }));
+
+const setFeatures = async (trx, farm_map_id, features) => {
+  await trx('farm_map_feature').where({ farm_map_id }).del();
+  if (!features.length) return;
+  await trx('farm_map_feature').insert(
+    features.map((f) => ({ ...f, farm_map_id, points: JSON.stringify(f.points) })),
+  );
+};
+
 /** Rows of each plan, for the hash and the export. Deleted plans are included: a retired map keeps its rows. */
 const loadEntries = async (farm_id, farm_map_id) => {
   const plans = await RowPlanModel.query()
@@ -169,7 +192,14 @@ const sendFarmMapGeoJSON = async (res, farmMap) => {
   res.set('ETag', `"${farmMap.content_hash}"`);
   return res
     .status(200)
-    .send(buildFarmRowPlanGeoJSON(entries, { fieldNumbers, nextFieldNumber }, farmMap));
+    .send(
+      buildFarmRowPlanGeoJSON(
+        entries,
+        { fieldNumbers, nextFieldNumber },
+        farmMap,
+        await getFeatures(farmMap.farm_map_id),
+      ),
+    );
 };
 
 const farmMapController = {
@@ -246,8 +276,63 @@ const farmMapController = {
       try {
         const farm_map = await getFarmMapRecord(req.headers.farm_id, req.params.farm_map_id);
         if (!farm_map) return res.sendStatus(404);
-        return res.status(200).send({ ...farm_map, plans: await getMembers(farm_map.farm_map_id) });
+        return res.status(200).send({
+          ...farm_map,
+          plans: await getMembers(farm_map.farm_map_id),
+          features: await getFeatures(farm_map.farm_map_id),
+        });
       } catch (error) {
+        return sendError(res, error);
+      }
+    };
+  },
+
+  /**
+   * PUT /farm_map/:farm_map_id/features   body: { features: [{ kind, name, points, heading_deg?, from_node?, to_node? }] }
+   * Replaces the docks and routes of a draft map. A dock is one point named dock, dock1, ...; a route is a line
+   * from one node (a dock or a row node such as F1R0N0) to another, with any points between as waypoints.
+   */
+  setFarmMapFeatures() {
+    return async (req, res) => {
+      const { farm_id } = req.headers;
+      let trx;
+      try {
+        trx = await transaction.start(Model.knex());
+        await lockFarmMaps(trx, farm_id);
+        const farm_map = await FarmMapModel.query(trx)
+          .whereNotDeleted()
+          .where({ farm_id, farm_map_id: req.params.farm_map_id })
+          .first();
+        if (!farm_map) {
+          await trx.rollback();
+          return res.sendStatus(404);
+        }
+        if (farm_map.status !== 'draft') {
+          throw new RowPlanError('only a draft map can change its docks and routes', 409);
+        }
+        const members = await getMembers(farm_map.farm_map_id, trx);
+        const rows = members.length
+          ? await FieldRowModel.query(trx)
+              .whereNotDeleted()
+              .whereIn(
+                'row_plan_id',
+                members.map((m) => m.row_plan_id),
+              )
+          : [];
+        const features = validateFarmMapFeatures(
+          req.body.features,
+          members.map((m) => ({
+            field_number: m.field_number,
+            rows: rows.filter((row) => row.row_plan_id === m.row_plan_id),
+          })),
+        );
+        await setFeatures(trx, farm_map.farm_map_id, features);
+        await trx.commit();
+        return res
+          .status(200)
+          .send({ ...farm_map, features: await getFeatures(farm_map.farm_map_id) });
+      } catch (error) {
+        if (trx) await trx.rollback();
         return sendError(res, error);
       }
     };
@@ -335,12 +420,14 @@ const farmMapController = {
             members.map((m) => m.row_plan_id),
           )
           .orderBy('position');
-        const content_hash = computeFarmMapHash(
-          members.map((m) => ({
-            field_number: m.field_number,
-            rows: rows.filter((row) => row.row_plan_id === m.row_plan_id),
-          })),
-        );
+        const entries = members.map((m) => ({
+          field_number: m.field_number,
+          rows: rows.filter((row) => row.row_plan_id === m.row_plan_id),
+        }));
+        // The plans may have been swapped since the routes were drawn: every route must still meet its nodes.
+        const features = await getFeatures(farm_map.farm_map_id, trx);
+        checkRouteEnds(features, entries);
+        const content_hash = computeFarmMapHash(entries, features);
         const now = new Date().toISOString();
         await FarmMapModel.query(trx)
           .context(context)

@@ -292,6 +292,88 @@ describe('Farm maps', () => {
     });
   });
 
+  describe('Docks and routes', () => {
+    // Row 0 of field 1 starts at lat 48.0, lng 3.66 (see plan()).
+    const dock = {
+      kind: 'dock',
+      name: 'dock',
+      points: [{ lat: 47.9999, lng: 3.6599 }],
+      heading_deg: 90,
+    };
+    const route = {
+      kind: 'route',
+      name: 'dock_to_f1',
+      from_node: 'dock',
+      to_node: 'F1R0N0',
+      points: [
+        { lat: 47.9999, lng: 3.6599 },
+        { lat: 47.99995, lng: 3.65995 },
+        { lat: 48.0, lng: 3.66 },
+      ],
+    };
+    const setFeatures = (map, features) =>
+      request('put', `/farm_map/${map.farm_map_id}/features`, env, { features });
+
+    test('A draft takes docks and routes, and the map returns them', async () => {
+      const { farm_map } = (await createMap(env)).body;
+      const res = await setFeatures(farm_map, [dock, route]);
+      expect(res.status).toBe(200);
+      expect(res.body.features.map((f) => f.name)).toEqual(['dock', 'dock_to_f1']);
+      const got = await request('get', `/farm_map/${farm_map.farm_map_id}`, env);
+      expect(got.body.features).toHaveLength(2);
+      expect((await setFeatures(farm_map, [])).body.features).toEqual([]);
+    });
+
+    test('A route to a node that is not there, or drawn away from it, is refused', async () => {
+      const { farm_map } = (await createMap(env)).body;
+      const nowhere = await setFeatures(farm_map, [dock, { ...route, to_node: 'F7R0N0' }]);
+      expect(nowhere.status).toBe(400);
+      const far = await setFeatures(farm_map, [
+        dock,
+        { ...route, points: [route.points[0], { lat: 48.01, lng: 3.67 }] },
+      ]);
+      expect(far.status).toBe(400);
+      expect(far.body.error).toMatch(/10 m/);
+    });
+
+    test('Publishing covers the docks and routes in the hash, and the export carries them', async () => {
+      const { farm_map } = (await createMap(env)).body;
+      await setFeatures(farm_map, [dock, route]);
+      const published = await request('post', `/farm_map/${farm_map.farm_map_id}/publish`, env);
+      expect(published.status).toBe(200);
+      const exported = await request('get', `/farm_map/${farm_map.farm_map_id}/geojson`, env);
+      const roles = exported.body.features.map((f) => f.properties.role);
+      expect(roles.filter((r) => r === 'dock')).toHaveLength(1);
+      expect(roles.filter((r) => r === 'route')).toHaveLength(1);
+      expect(published.body.content_hash).toMatch(/^[0-9a-f]{64}$/);
+      const bare = await createMap(env);
+      const bareHash = (
+        await request('post', `/farm_map/${bare.body.farm_map.farm_map_id}/publish`, env)
+      ).body.content_hash;
+      expect(bareHash).not.toBe(published.body.content_hash);
+    });
+
+    test('A published map cannot have its docks changed', async () => {
+      const { farm_map } = (await createMap(env)).body;
+      await setFeatures(farm_map, [dock]);
+      await request('post', `/farm_map/${farm_map.farm_map_id}/publish`, env);
+      expect((await setFeatures(farm_map, [])).status).toBe(409);
+      await expect(
+        knex('farm_map_feature').where({ farm_map_id: farm_map.farm_map_id }).del(),
+      ).rejects.toThrow(/cannot change/);
+    });
+
+    test('Swapping the plans so that a route loses its node stops publishing', async () => {
+      const { farm_map } = (await createMap(env)).body;
+      await setFeatures(farm_map, [dock, route]);
+      await request('put', `/farm_map/${farm_map.farm_map_id}/plans`, env, {
+        row_plan_ids: [planB.row_plan_id],
+      });
+      const res = await request('post', `/farm_map/${farm_map.farm_map_id}/publish`, env);
+      expect(res.status).toBe(400);
+    });
+  });
+
   describe('Access', () => {
     test('Another farm is refused, and a worker can read maps but not change them', async () => {
       const outsider = await setupFarmEnvironment(1);

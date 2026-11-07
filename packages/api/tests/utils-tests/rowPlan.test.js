@@ -19,6 +19,7 @@ import {
   parseRowSpec,
   canonicalRowsText,
   computeMapHash,
+  canonicalFeaturesText,
   formatCoordinate,
   rowsOutsideField,
   buildRowPlanGeoJSON,
@@ -26,6 +27,8 @@ import {
   rowName,
   nodeName,
   nodeStarts,
+  computeFarmMapHash,
+  validateFarmMapFeatures,
 } from '../../src/util/rowPlan.js';
 
 const rowFeature = (row, frag, coordinates) => ({
@@ -315,7 +318,13 @@ describe('buildRowPlanGeoJSON', () => {
 describe('row and node names', () => {
   const origin = { lat: 51.5396, lng: -2.4121 };
   const rowsOf = () => vectorRows.map((r, i) => ({ ...r, row_id: `row-${i}`, length: '1.00' }));
-  const plan3 = { row_plan_id: 'p', location_id: 'loc-1', source: 'in_app', field_number: 3, origin };
+  const plan3 = {
+    row_plan_id: 'p',
+    location_id: 'loc-1',
+    source: 'in_app',
+    field_number: 3,
+    origin,
+  };
 
   test('rows are F<field>R<row> and nodes F<field>R<row>N<node>', () => {
     expect(rowName(1, 12)).toBe('F1R12');
@@ -395,7 +404,9 @@ describe('buildFarmRowPlanGeoJSON', () => {
     });
     expect(doc.properties.field_numbers).toEqual({ 'loc-a': 1, 'loc-gone': 2 });
     expect(doc.properties.next_field_number).toBe(3);
-    expect(buildFarmRowPlanGeoJSON([entry(2, 'loc-b', 'South')]).properties.next_field_number).toBe(3);
+    expect(buildFarmRowPlanGeoJSON([entry(2, 'loc-b', 'South')]).properties.next_field_number).toBe(
+      3,
+    );
   });
 
   test('cannot be imported as one field', () => {
@@ -413,5 +424,98 @@ describe('buildFarmRowPlanGeoJSON', () => {
       { ...rowFeature(2, 0, line), properties: { role: 'row', row: 2, frag: 0, field: 2 } },
     ]);
     expect(() => parseRowPlanGeoJSON(doc)).toThrow(/more than one field/);
+  });
+});
+
+describe('Docks and routes of a farm map', () => {
+  const rowsEntry = [
+    {
+      field_number: 1,
+      rows: [
+        {
+          row_number: 0,
+          frag: 0,
+          position: 0,
+          line_points: [
+            { lat: 48.0041, lng: 3.6619 },
+            { lat: 48.0041, lng: 3.6624 },
+          ],
+          length: 10,
+        },
+      ],
+    },
+  ];
+  const dock = {
+    kind: 'dock',
+    name: 'dock',
+    points: [{ lat: 48.0039, lng: 3.6617 }],
+    heading_deg: 90,
+  };
+  const route = {
+    kind: 'route',
+    name: 'dock_to_f1',
+    from_node: 'dock',
+    to_node: 'F1R0N0',
+    points: [
+      { lat: 48.0039, lng: 3.6617 },
+      { lat: 48.004, lng: 3.6618 },
+      { lat: 48.0041, lng: 3.6619 },
+    ],
+  };
+
+  test('A map with no docks or routes keeps the hash it had before they existed', () => {
+    expect(computeFarmMapHash(rowsEntry, [])).toBe(computeFarmMapHash(rowsEntry));
+  });
+
+  test('Docks and routes change the hash, whatever order they are given in', () => {
+    const features = validateFarmMapFeatures([dock, route], rowsEntry);
+    const hash = computeFarmMapHash(rowsEntry, features);
+    expect(hash).not.toBe(computeFarmMapHash(rowsEntry));
+    expect(computeFarmMapHash(rowsEntry, [...features].reverse())).toBe(hash);
+    const moved = validateFarmMapFeatures([{ ...dock, heading_deg: 180 }, route], rowsEntry);
+    expect(computeFarmMapHash(rowsEntry, moved)).not.toBe(hash);
+  });
+
+  test('The robot importer can check itself against this text', () => {
+    const features = validateFarmMapFeatures([route, dock], rowsEntry);
+    expect(canonicalFeaturesText(features)).toBe(
+      '[["dock","dock",90,null,null,[[3.6617000,48.0039000]]],' +
+        '["route","dock_to_f1",null,"dock","F1R0N0",[[3.6617000,48.0039000],[3.6618000,48.0040000],[3.6619000,48.0041000]]]]',
+    );
+  });
+
+  test('Bad docks and routes are refused with a reason', () => {
+    const refused = (features, message) =>
+      expect(() => validateFarmMapFeatures(features, rowsEntry)).toThrow(message);
+    refused([{ ...dock, name: 'bay1' }], /named dock/);
+    refused([{ ...route, name: 'dock2' }], /named like a dock/);
+    refused([dock, dock], /used twice/);
+    refused([route], /dock is not a dock or a row node/);
+    refused([dock, { ...route, to_node: 'F9R0N0' }], /F9R0N0 is not/);
+    refused([dock, { ...route, points: [route.points[0], { lat: 48.005, lng: 3.662 }] }], /10 m/);
+    refused([dock, { ...route, from_node: 'F1R0N0' }], /different to_node|different/);
+    refused([{ ...dock, heading_deg: 360 }], /heading_deg/);
+    refused([{ ...dock, points: [] }], /one point/);
+  });
+
+  test('The export carries docks as points and routes with their waypoints named', () => {
+    const features = validateFarmMapFeatures([dock, route], rowsEntry);
+    const entries = [
+      {
+        plan: { field_number: 1, location_id: 'l', row_plan_id: 'p', source: 'in_app' },
+        field_number: 1,
+        rows: rowsEntry[0].rows,
+        name: 'North',
+        ring: null,
+      },
+    ];
+    const out = buildFarmRowPlanGeoJSON(entries, {}, null, features);
+    const [d, r] = out.features.slice(-2);
+    expect(d).toMatchObject({
+      geometry: { type: 'Point', coordinates: [3.6617, 48.0039] },
+      properties: { role: 'dock', name: 'dock', heading_deg: 90 },
+    });
+    expect(r.properties.node_names).toEqual(['dock', 'dock_to_f1_1', 'F1R0N0']);
+    expect(r.geometry.type).toBe('LineString');
   });
 });
