@@ -316,7 +316,8 @@ const farmMapController = {
           .whereIn(
             'row_plan_id',
             members.map((m) => m.row_plan_id),
-          );
+          )
+          .forShare();
         const liveIds = new Set(live.map((plan) => plan.row_plan_id));
         const stale = members.filter((m) => !liveIds.has(m.row_plan_id));
         if (stale.length) {
@@ -407,10 +408,13 @@ const farmMapController = {
         if (farm_map.status !== 'draft') {
           throw new RowPlanError('only a draft map can be deleted', 409);
         }
-        await FarmMapModel.query()
+        const updated = await FarmMapModel.query()
           .context(context)
           .patch({ deleted: true })
-          .where({ farm_map_id: farm_map.farm_map_id });
+          .where({ farm_map_id: farm_map.farm_map_id, status: 'draft' });
+        if (!updated) {
+          throw new RowPlanError('only a draft map can be deleted', 409);
+        }
         return res.sendStatus(204);
       } catch (error) {
         return sendError(res, error);
