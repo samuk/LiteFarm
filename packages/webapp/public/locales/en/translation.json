@@ -1014,27 +1014,6 @@
         "CONFIRM_RETIRE": "Retire map",
         "DOWNLOAD": "Download map",
         "FAILED": "Farm map: {{message}}",
-        "FEATURES": {
-          "ADD_DOCK": "Add dock",
-          "ADD_ROUTE": "Add route",
-          "CANCEL": "Cancel",
-          "DOCK": "Dock {{name}}",
-          "ERRORS": {
-            "END": "The last point must be on a different dock or row node. Click it again closer to the node.",
-            "START": "The first point must be on a dock or a row node. Zoom in and click closer to the node.",
-            "TOO_FEW_POINTS": "A route needs at least two points."
-          },
-          "FINISH_ROUTE": "Finish route",
-          "HEADING": "Heading of {{name}} in degrees from north",
-          "NONE": "No docks or routes.",
-          "NOTE": "Docks and routes are saved when the map is published. A route runs from a dock or row node to another, and the points between are waypoints. To move a dock, remove it and add it again.",
-          "PLACING_DOCK": "Click the map where the robot charges.",
-          "PLACING_ROUTE": "Click the start on a dock or row node, then the waypoints, then the end on a node. Points so far: {{count}}.",
-          "REMOVE": "Remove {{name}}",
-          "REMOVE_SHORT": "Remove",
-          "ROUTE": "Route {{name}}: {{from}} to {{to}}, {{count}} waypoints",
-          "TITLE": "Docks and routes"
-        },
         "NAME": "Map name",
         "NONE": "No published map.",
         "NOTE": "Publishing freezes every field's saved plan and replaces the published map with a new version. Unsaved plans are not included.",
@@ -1044,6 +1023,27 @@
         "RETIRE": "Retire map",
         "SEASON": "Season (optional)",
         "TITLE": "Farm map"
+      },
+      "FEATURES": {
+        "ADD_DOCK": "Add dock",
+        "ADD_ROUTE": "Add route",
+        "CANCEL": "Cancel",
+        "DOCK": "Dock {{name}}",
+        "ERRORS": {
+          "END": "The last point must be on a different dock or row node. Click it again closer to the node.",
+          "START": "The first point must be on a dock or a row node. Zoom in and click closer to the node.",
+          "TOO_FEW_POINTS": "A route needs at least two points."
+        },
+        "FINISH_ROUTE": "Finish route",
+        "HEADING": "Heading of {{name}} in degrees from north",
+        "NONE": "No docks or routes.",
+        "NOTE": "Docks and routes are saved when the map is published. A route runs from a dock or row node to another, and the points between are waypoints. To move a dock, remove it and add it again.",
+        "PLACING_DOCK": "Click the map where the robot charges.",
+        "PLACING_ROUTE": "Click the start on a dock or row node, then the waypoints, then the end on a node. Points so far: {{count}}.",
+        "REMOVE": "Remove {{name}}",
+        "REMOVE_SHORT": "Remove",
+        "ROUTE": "Route {{name}}: {{from}} to {{to}}, {{count}} waypoints",
+        "TITLE": "Docks and routes"
       },
       "FELL_BACK": "No usable contour (field too flat or outside the survey): straight rows used.",
       "FIELD": "Field",
