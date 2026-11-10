@@ -488,22 +488,34 @@ const farmMapController = {
   /** DELETE /farm_map/:farm_map_id   Draft maps only. Published maps are retired, not deleted. */
   deleteFarmMap() {
     return async (req, res) => {
+      const { farm_id } = req.headers;
       const context = { user_id: req.auth?.user_id };
+      let trx;
       try {
-        const farm_map = await getFarmMapRecord(req.headers.farm_id, req.params.farm_map_id);
-        if (!farm_map) return res.sendStatus(404);
+        trx = await transaction.start(Model.knex());
+        await lockFarmMaps(trx, farm_id);
+        const farm_map = await FarmMapModel.query(trx)
+          .whereNotDeleted()
+          .where({ farm_id, farm_map_id: req.params.farm_map_id })
+          .first();
+        if (!farm_map) {
+          await trx.rollback();
+          return res.sendStatus(404);
+        }
         if (farm_map.status !== 'draft') {
           throw new RowPlanError('only a draft map can be deleted', 409);
         }
-        const updated = await FarmMapModel.query()
+        const updated = await FarmMapModel.query(trx)
           .context(context)
           .patch({ deleted: true })
           .where({ farm_map_id: farm_map.farm_map_id, status: 'draft' });
         if (!updated) {
           throw new RowPlanError('only a draft map can be deleted', 409);
         }
+        await trx.commit();
         return res.sendStatus(204);
       } catch (error) {
+        if (trx) await trx.rollback();
         return sendError(res, error);
       }
     };
