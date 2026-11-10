@@ -26,6 +26,8 @@ services:
     build:
       context: ./packages/
       dockerfile: ./webapp/prod.Dockerfile
+      args:
+        VITE_MAP_GLYPHS_URL: ${VITE_MAP_GLYPHS_URL:?Set VITE_MAP_GLYPHS_URL to a managed glyph host serving MAP_LABEL_FONT}
     volumes:
       - /etc/letsencrypt:/etc/letsencrypt
     ports:

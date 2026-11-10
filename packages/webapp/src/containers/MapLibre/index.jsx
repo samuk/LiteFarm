@@ -307,11 +307,10 @@ export default function MapLibreMap({ isCompactSideMenu }) {
     { skip: !farm_id || isOffline, refetchOnMountOrArgChange: true },
   );
   // A field keeps its number for good; a field with no plan yet takes the next free one.
-  const planFieldNumber = planField
-    ? (farmPlans?.properties?.field_numbers?.[planField.id] ??
-      farmPlans?.properties?.next_field_number ??
-      1)
-    : undefined;
+  const planFieldNumber =
+    planField && farmPlans?.properties
+      ? (farmPlans.properties.field_numbers?.[planField.id] ?? farmPlans.properties.next_field_number)
+      : undefined;
   // The farm's published map. Its plans are frozen, so a field in it cannot be re-planned until it is retired.
   const { data: publishedMap } = useGetPublishedFarmMapQuery(
     { farm_id },
