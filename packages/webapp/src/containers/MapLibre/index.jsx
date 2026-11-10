@@ -314,7 +314,7 @@ export default function MapLibreMap({ isCompactSideMenu }) {
   // The farm's published map. Its plans are frozen, so a field in it cannot be re-planned until it is retired.
   const { data: publishedMap } = useGetPublishedFarmMapQuery(
     { farm_id },
-    { skip: !farm_id || isOffline },
+    { skip: !farm_id || isOffline, refetchOnMountOrArgChange: true },
   );
   const [publishFarmMap, { isLoading: mapPublishing }] = usePublishFarmMapMutation();
   const [retireFarmMap, { isLoading: mapRetiring }] = useRetireFarmMapMutation();
