@@ -12,6 +12,12 @@ COPY ./webapp/ /usr/src/app/
 
 COPY ./shared/ /usr/src/shared/
 
+# Required managed glyph host: must serve every range for MAP_LABEL_FONT's font stack.
+# Vite embeds this value at build time; nginx runtime variables cannot configure it.
+ARG VITE_MAP_GLYPHS_URL
+ENV VITE_MAP_GLYPHS_URL=${VITE_MAP_GLYPHS_URL}
+RUN test -n "$VITE_MAP_GLYPHS_URL" || (echo "VITE_MAP_GLYPHS_URL must specify a managed glyph host" >&2; exit 1)
+
 RUN pnpm run build
 
 FROM nginx:1.25.1
