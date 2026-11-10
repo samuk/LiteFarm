@@ -17,7 +17,7 @@
 // Drawing and editing of new locations is in ./useMapLibreDrawing. Marker clustering, dashed
 // outlines and road view are not ported yet.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import clsx from 'clsx';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useDispatch, useSelector } from 'react-redux';
@@ -100,8 +100,25 @@ import {
   summarisePlan,
   validateSettings,
 } from '../../util/rowPlanner';
-import { useGetFieldRowPlanQuery, useImportRowPlanMutation } from '../../store/api/rowPlanApi';
+import { useGetFarmRowPlansQuery, useImportRowPlanMutation } from '../../store/api/rowPlanApi';
+import {
+  useGetPublishedFarmMapQuery,
+  useLazyGetPublishedFarmMapGeoJSONQuery,
+  usePublishFarmMapMutation,
+  useRetireFarmMapMutation,
+} from '../../store/api/farmMapApi';
 import useRowPlan from './useRowPlan';
+import useFarmMapFeatures from './useFarmMapFeatures';
+import {
+  buildRoute,
+  dockNodesOf,
+  featuresToCollection,
+  nextDockName,
+  nextRouteName,
+  removeFeature,
+  rowNodesOf,
+  toApiFeatures,
+} from '../../util/farmMapFeatures';
 import RowPlannerControl from '../../components/Map/RowPlannerControl';
 
 const FALLBACK_COLOUR = '#666666';
@@ -176,6 +193,7 @@ export default function MapLibreMap({ isCompactSideMenu }) {
   const hasFittedRef = useRef(false);
   const hoveredIdRef = useRef(null);
   const drawingActiveRef = useRef(false);
+  const placingRef = useRef(null);
   const hasRestoredRef = useRef(false);
 
   const system = useSelector(measurementSelector);
@@ -282,35 +300,111 @@ export default function MapLibreMap({ isCompactSideMenu }) {
     [internalLocations],
   );
   const planField = plannableAreas.find((area) => area.id === planFieldId) ?? plannableAreas[0];
+  // Every field's saved plan, loaded together so several fields show at once. Always refetched so a plan
+  // saved earlier (or superseded elsewhere) is never served from a stale cache.
+  const { data: farmPlans, refetch: refetchFarmPlans } = useGetFarmRowPlansQuery(
+    { farm_id },
+    { skip: !farm_id || isOffline, refetchOnMountOrArgChange: true },
+  );
+  // A field keeps its number for good; a field with no plan yet takes the next free one.
+  const planFieldNumber =
+    planField && farmPlans?.properties
+      ? (farmPlans.properties.field_numbers?.[planField.id] ?? farmPlans.properties.next_field_number)
+      : undefined;
+  // The farm's published map. Its plans are frozen, so a field in it cannot be re-planned until it is retired.
+  const { data: publishedMap } = useGetPublishedFarmMapQuery(
+    { farm_id },
+    { skip: !farm_id || isOffline, refetchOnMountOrArgChange: true },
+  );
+  const [publishFarmMap, { isLoading: mapPublishing }] = usePublishFarmMapMutation();
+  const [retireFarmMap, { isLoading: mapRetiring }] = useRetireFarmMapMutation();
+  const [fetchMapGeoJSON, { isFetching: mapDownloading }] =
+    useLazyGetPublishedFarmMapGeoJSONQuery();
+  const [mapError, setMapError] = useState(null);
+  const planFieldLocked = !!planField && !!publishedMap?.plans?.some((p) => p.location_id === planField.id);
   const planCollection = useMemo(
-    () => (plan ? planToFeatureCollection(plan.result) : null),
-    [plan],
+    () => (plan ? planToFeatureCollection(plan.result, planFieldNumber) : null),
+    [plan, planFieldNumber],
   );
   const planSummary = useMemo(() => (plan ? summarisePlan(plan.result) : null), [plan]);
-  // The saved plan for the field, shown until a new plan is made. Always refetched so a plan
-  // saved earlier (or superseded elsewhere) is never served from a stale cache.
-  const { data: savedPlan, refetch: refetchSavedPlan } = useGetFieldRowPlanQuery(
-    { farm_id, location_id: planField?.id },
-    {
-      skip: !farm_id || !planField?.id || isOffline,
-      refetchOnMountOrArgChange: true,
-    },
-  );
-  const savedCollection = useMemo(
-    () =>
-      Array.isArray(savedPlan?.features)
-        ? {
-            type: 'FeatureCollection',
-            features: savedPlan.features.filter((f) => f.properties?.role === 'row'),
-          }
-        : null,
-    [savedPlan],
-  );
+  // Saved rows of every field, except the selected field while its unsaved plan is on screen.
+  const mapCollection = useMemo(() => {
+    const saved = (farmPlans?.features ?? []).filter(
+      (f) =>
+        f.properties?.role === 'row' && !(planCollection && f.properties.location_id === planField?.id),
+    );
+    const features = [...saved, ...(planCollection?.features ?? [])];
+    return features.length ? { type: 'FeatureCollection', features } : null;
+  }, [farmPlans, planCollection, planField?.id]);
   useRowPlan({
     map: mapReady ? mapRef.current : null,
-    collection: planCollection ?? savedCollection,
+    collection: mapCollection,
   });
   useEffect(() => () => plannerRef.current?.terminate(), []);
+
+  // Docks and routes of the farm map being built. They start as the published map's and are sent to the api
+  // with the next publish, which makes a new map version.
+  const [mapFeatures, setMapFeatures] = useState([]);
+  const [featurePlacing, setFeaturePlacing] = useState(null);
+  const [routePoints, setRoutePoints] = useState([]);
+  const [featureErrorKey, setFeatureErrorKey] = useState(null);
+  placingRef.current = featurePlacing;
+  useEffect(() => {
+    if (publishedMap?.features) setMapFeatures(publishedMap.features);
+  }, [publishedMap]);
+  const featureCollection = useMemo(() => featuresToCollection(mapFeatures), [mapFeatures]);
+  // The api checks route ends against the saved plans, so those are the nodes a route can join.
+  const savedRowNodes = useMemo(() => rowNodesOf(farmPlans), [farmPlans]);
+
+  const handleFeaturePlace = useCallback(
+    (point) => {
+      if (drawingActiveRef.current) return;
+      setFeatureErrorKey(null);
+      if (featurePlacing === 'dock') {
+        setMapFeatures((features) => [
+          ...features,
+          { kind: 'dock', name: nextDockName(features), points: [point], heading_deg: null },
+        ]);
+        setFeaturePlacing(null);
+      } else if (featurePlacing === 'route') {
+        setRoutePoints((points) => [...points, point]);
+      }
+    },
+    [featurePlacing],
+  );
+  useFarmMapFeatures({
+    map: mapReady ? mapRef.current : null,
+    collection: featureCollection,
+    draftPoints: routePoints,
+    placing: featurePlacing,
+    onPlace: handleFeaturePlace,
+  });
+
+  const startPlacing = (kind) => {
+    setFeaturePlacing(kind);
+    setRoutePoints([]);
+    setFeatureErrorKey(null);
+  };
+  const cancelPlacing = () => startPlacing(null);
+  const finishRoute = () => {
+    const result = buildRoute(nextRouteName(mapFeatures), routePoints, [
+      ...savedRowNodes,
+      ...dockNodesOf(mapFeatures),
+    ]);
+    if ('error' in result) {
+      setFeatureErrorKey(result.error);
+      return;
+    }
+    setMapFeatures((features) => [...features, result.route]);
+    cancelPlacing();
+  };
+  const handleDockHeading = (name, text) => {
+    const heading = text === '' ? null : Number(text);
+    if (heading !== null && !(Number.isInteger(heading) && heading >= 0 && heading < 360)) return;
+    setMapFeatures((features) =>
+      features.map((f) => (f.kind === 'dock' && f.name === name ? { ...f, heading_deg: heading } : f)),
+    );
+  };
 
   const handlePlanFieldChange = (id) => {
     setPlanFieldId(id);
@@ -372,8 +466,65 @@ export default function MapLibreMap({ isCompactSideMenu }) {
 
   const handleDownloadPlan = () => {
     if (!plan) return;
-    const geojson = buildDownloadGeoJSON(plan.request, plan.result);
+    const geojson = buildDownloadGeoJSON(plan.request, plan.result, planFieldNumber);
     saveAs(new Blob([JSON.stringify(geojson)], { type: 'application/geo+json' }), 'swaths.geojson');
+  };
+
+  // All fields' saved plans in one file, rows named F<field>R<row>.
+  const handleDownloadAllPlans = () => {
+    if (!farmPlans?.features?.length) return;
+    saveAs(
+      new Blob([JSON.stringify(farmPlans)], { type: 'application/geo+json' }),
+      'farm-swaths.geojson',
+    );
+  };
+
+  // The api answers with JSON ({ error }) or, from its permission checks, plain text.
+  const errorText = (error) => {
+    const data = error?.data;
+    const detail = typeof data === 'string' ? data.trim().slice(0, 200) : data?.error;
+    const text = typeof detail === 'string' && detail ? detail : (error?.error ?? error?.message);
+    const status = error?.status;
+    if (typeof text === 'string' && text) return typeof status === 'number' ? `${status}: ${text}` : text;
+    return typeof status === 'number' ? `HTTP ${status}` : 'unknown error';
+  };
+
+  const handlePublishMap = async ({ name, season }) => {
+    setMapError(null);
+    try {
+      await publishFarmMap({
+        farm_id,
+        name,
+        season,
+        features: toApiFeatures(mapFeatures),
+      }).unwrap();
+    } catch (error) {
+      setMapError(errorText(error));
+    }
+  };
+
+  const handleRetireMap = async () => {
+    if (!publishedMap) return;
+    setMapError(null);
+    try {
+      await retireFarmMap({ farm_map_id: publishedMap.farm_map_id }).unwrap();
+    } catch (error) {
+      setMapError(errorText(error));
+    }
+  };
+
+  const handleDownloadMap = async () => {
+    if (!publishedMap) return;
+    setMapError(null);
+    try {
+      const geojson = await fetchMapGeoJSON({ farm_id }).unwrap();
+      saveAs(
+        new Blob([JSON.stringify(geojson)], { type: 'application/geo+json' }),
+        `farm-map-v${publishedMap.version}.geojson`,
+      );
+    } catch (error) {
+      setMapError(errorText(error));
+    }
   };
 
   const handleSavePlan = async () => {
@@ -384,10 +535,10 @@ export default function MapLibreMap({ isCompactSideMenu }) {
       const saved = await importRowPlan({
         farm_id,
         location_id: planField.id,
-        geojson: buildDownloadGeoJSON(saving.request, saving.result),
+        geojson: buildDownloadGeoJSON(saving.request, saving.result, planFieldNumber),
       }).unwrap();
       setSave({ plan: saving, saved: true, error: null, warnings: saved.warnings ?? [] });
-      refetchSavedPlan();
+      refetchFarmPlans();
     } catch (error) {
       setSave({
         plan: saving,
@@ -461,7 +612,7 @@ export default function MapLibreMap({ isCompactSideMenu }) {
 
       const clickable = [...AREA_LAYERS, ...LINE_LAYERS];
       map.on('click', (e) => {
-        if (e.defaultPrevented || drawingActiveRef.current) return;
+        if (e.defaultPrevented || drawingActiveRef.current || placingRef.current) return;
         const hits = map
           .queryRenderedFeatures(e.point, { layers: clickable })
           .map((f) => f.properties);
@@ -752,7 +903,27 @@ export default function MapLibreMap({ isCompactSideMenu }) {
                 setPlanErrorMessage(null);
               }}
               onDownload={handleDownloadPlan}
+              onDownloadAll={handleDownloadAllPlans}
+              hasSavedPlans={!!farmPlans?.features?.length}
+              fieldNumber={planFieldNumber}
               onSave={handleSavePlan}
+              farmMap={publishedMap ?? null}
+              fieldLocked={planFieldLocked}
+              isMapBusy={mapPublishing || mapRetiring || mapDownloading}
+              mapErrorMessage={mapError}
+              onPublishMap={handlePublishMap}
+              onRetireMap={handleRetireMap}
+              onDownloadMap={handleDownloadMap}
+              mapFeatures={mapFeatures}
+              featurePlacing={featurePlacing}
+              routePointCount={routePoints.length}
+              featureErrorKey={featureErrorKey}
+              onAddDock={() => startPlacing('dock')}
+              onAddRoute={() => startPlacing('route')}
+              onFinishRoute={finishRoute}
+              onCancelPlacing={cancelPlacing}
+              onRemoveFeature={(name) => setMapFeatures((features) => removeFeature(features, name))}
+              onDockHeading={handleDockHeading}
             />
           )}
           {drawingState.type && (

@@ -997,6 +997,7 @@
       "CONTOUR": "Contour rows (needs a survey; angle is ignored)",
       "CONTOUR_USED": "Contour rows used.",
       "DOWNLOAD": "GeoJSON",
+      "DOWNLOAD_ALL": "All fields",
       "ERRORS": {
         "ANGLE": "Enter an angle.",
         "GRID": "Survey grid cell must be at least 0.25 m.",
@@ -1008,13 +1009,51 @@
         "TOOL_WIDTH": "Row spacing must be at least 0.5 m."
       },
       "FAILED": "Planning failed: {{message}}",
+      "FARM_MAP": {
+        "CANCEL": "Cancel",
+        "CONFIRM_RETIRE": "Retire map",
+        "DOWNLOAD": "Download map",
+        "FAILED": "Farm map: {{message}}",
+        "NAME": "Map name",
+        "NONE": "No published map.",
+        "NOTE": "Publishing freezes every field's saved plan and replaces the published map with a new version. Unsaved plans are not included.",
+        "PUBLISH": "Publish map",
+        "PUBLISHED": "Published: {{name}}, version {{version}} {{season}} ({{count}} fields)",
+        "PUBLISHING": "Working…",
+        "RETIRE": "Retire map",
+        "SEASON": "Season (optional)",
+        "TITLE": "Farm map"
+      },
+      "FEATURES": {
+        "ADD_DOCK": "Add dock",
+        "ADD_ROUTE": "Add route",
+        "CANCEL": "Cancel",
+        "DOCK": "Dock {{name}}",
+        "ERRORS": {
+          "END": "The last point must be on a different dock or row node. Click it again closer to the node.",
+          "START": "The first point must be on a dock or a row node. Zoom in and click closer to the node.",
+          "TOO_FEW_POINTS": "A route needs at least two points."
+        },
+        "FINISH_ROUTE": "Finish route",
+        "HEADING": "Heading of {{name}} in degrees from north",
+        "NONE": "No docks or routes.",
+        "NOTE": "Docks and routes are saved when the map is published. A route runs from a dock or row node to another, and the points between are waypoints. To move a dock, remove it and add it again.",
+        "PLACING_DOCK": "Click the map where the robot charges.",
+        "PLACING_ROUTE": "Click the start on a dock or row node, then the waypoints, then the end on a node. Points so far: {{count}}.",
+        "REMOVE": "Remove {{name}}",
+        "REMOVE_SHORT": "Remove",
+        "ROUTE": "Route {{name}}: {{from}} to {{to}}, {{count}} waypoints",
+        "TITLE": "Docks and routes"
+      },
       "FELL_BACK": "No usable contour (field too flat or outside the survey): straight rows used.",
       "FIELD": "Field",
+      "FIELD_LOCKED": "This field's plan is in the published map \"{{name}}\" (version {{version}}) and cannot be replaced. Retire the map to re-plan it.",
+      "FIELD_NAMING": "Rows in this field are named F{{field}}R<row>, nodes F{{field}}R<row>N<node>.",
       "GRID": "Survey grid cell (m)",
       "HEADLAND": "Headland (m)",
+      "NOTE": "Planning runs in your browser and the survey is never uploaded. Press Save to store the rows with your farm. The first run downloads the planner (contour rows download more).",
       "NO_FIELDS": "Draw a field or garden on the map to plan rows for it.",
       "NO_ROWS": "No rows fit in this field with these settings.",
-      "NOTE": "Planning runs in your browser and the survey is never uploaded. Press Save to store the rows with your farm. The first run downloads the planner (contour rows download more).",
       "PATH": "Path {{path}} km in {{passes}} pass(es)",
       "PLAN": "Plan",
       "PLANNING": "Planning…",
@@ -1337,6 +1376,15 @@
       "CARD": {
         "COMPLETED_ON": "Completed · {{date}}",
         "ESTIMATED_MINUTES": "~{{minutes}} min",
+        "HALF": {
+          "AWEAI": "Women's empowerment (A-WEAI)",
+          "BIODIVERSITY": "Biodiversity",
+          "DASHBOARD_LINK": "Final scores for the economic indicators are available on the <a>LiteFarm Data Dashboard</a>",
+          "LAND_TENURE": "Land tenure (household)",
+          "NOT_APPLICABLE": "Not applicable",
+          "NO_WOMEN": "No women in the household",
+          "PRODUCTIVITY": "Productivity and income"
+        },
         "HIGH_RISK": "High Risk",
         "IN_PROGRESS": "In progress",
         "LAST_UPDATED": "Last updated {{date}}",
@@ -1375,11 +1423,18 @@
       "NOT_FILLED": "Not filled",
       "RESULTS_LOAD_ERROR": "Failed to load results. Please try again later.",
       "RESULTS_TITLE": "Characterization of the Agroecological Transitions (CAET) Scores",
-      "TITLE": "TAPE Survey (Tool for Agroecology Performance Evaluation)",
+      "TITLE": "FAO TAPE Survey (Tool for Agroecology Performance Evaluation)",
       "UPDATE_ANSWERS": "Update your answers"
     },
+    "TAPE_AU": {
+      "TITLE": "TAPE Australia (Mornington Project)"
+    },
+    "TAPE_BC": {
+      "TITLE": "Agroecology 4 Climate BC TAPE"
+    },
     "TAPE_DIETARY_DIVERSITY": {
-      "TITLE": "Dietary diversity"
+      "SURVEY_TITLE": "Minimum dietary diversity for women (MDD-W)",
+      "TITLE": "Dietary diversity (MDD-W)"
     },
     "TAPE_ECONOMIC": {
       "TITLE": "Qualitative economic indicator"
@@ -1388,19 +1443,19 @@
       "TITLE": "Food security"
     },
     "TAPE_LAND_AWEAI": {
-      "TITLE": "Land tenure"
+      "TITLE": "Land tenure & women's empowerment (A-WEAI)"
     },
     "TAPE_PESTICIDES": {
-      "TITLE": "Exposure to pesticides"
+      "TITLE": "Pesticide management and exposure"
     },
     "TAPE_PRODUCTIVITY_BIODIVERSITY": {
-      "TITLE": "Productivity, income and value added"
+      "TITLE": "Productivity and agrobiodiversity"
     },
     "TAPE_SOIL": {
       "TITLE": "Soil health"
     },
     "TAPE_YOUTH": {
-      "TITLE": "Youth employment opportunity and emigration"
+      "TITLE": "Youth employment and emigration"
     },
     "TITLE": "Insights",
     "UNAVAILABLE": "Unavailable"

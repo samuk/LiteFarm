@@ -28,10 +28,10 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      JWT_INVITE_SECRET: ${{secrets.JWT_INVITE_SECRET}}
-      JWT_RESET_SECRET: ${{secrets.JWT_RESET_SECRET}}
-      JWT_SCHEDULER_SECRET: ${{secrets.JWT_SCHEDULER_SECRET}}
-      JWT_SECRET: ${{secrets.JWT_SECRET}}
+      JWT_INVITE_SECRET: ${{ secrets.JWT_INVITE_SECRET || 'ci_invite_secret' }}
+      JWT_RESET_SECRET: ${{ secrets.JWT_RESET_SECRET || 'ci_reset_secret' }}
+      JWT_SCHEDULER_SECRET: ${{ secrets.JWT_SCHEDULER_SECRET || 'ci_scheduler_secret' }}
+      JWT_SECRET: ${{ secrets.JWT_SECRET || 'ci_access_secret' }}
       JWT_DASHBOARD_SECRET: Dashboard_tickets_get_their_own_secret
       JWT_DASHBOARD_API_SECRET: Dashboard_API_tokens_get_their_own_secret
       TEST_USER: ${{secrets.TEST_USER}}

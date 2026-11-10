@@ -54,7 +54,7 @@ const setup = (props = {}) => {
     />,
   );
   fireEvent.click(screen.getByRole('button', { name: 'FARM_MAP.ROW_PLANNER.TITLE' }));
-  return handlers;
+  return { ...handlers, ...props } as typeof handlers & Record<string, any>;
 };
 
 afterEach(cleanup);
@@ -164,4 +164,116 @@ describe('RowPlannerControl', () => {
     expect(text).toContain('"swath":"1.23"');
     expect(text).toContain('"passes":2');
   });
+  describe('farm map', () => {
+    const map = { name: 'Map 2027', version: 2, season: '2027', plans: [{}, {}] };
+    const mapHandlers = () => ({
+      onPublishMap: vi.fn(),
+      onRetireMap: vi.fn(),
+      onDownloadMap: vi.fn(),
+    });
+
+    it('says there is no published map and cannot download one', () => {
+      setup({ ...mapHandlers(), farmMap: null });
+      expect(screen.getByText('FARM_MAP.ROW_PLANNER.FARM_MAP.NONE')).toBeTruthy();
+      expect(
+        (screen.getByText('FARM_MAP.ROW_PLANNER.FARM_MAP.DOWNLOAD') as HTMLButtonElement).disabled,
+      ).toBe(true);
+    });
+    it('publishes only with a name and saved plans', () => {
+      const h = setup({ ...mapHandlers(), farmMap: null, hasSavedPlans: true });
+      const publish = screen.getByText('FARM_MAP.ROW_PLANNER.FARM_MAP.PUBLISH') as HTMLButtonElement;
+      expect(publish.disabled).toBe(true);
+      fireEvent.change(screen.getByLabelText('FARM_MAP.ROW_PLANNER.FARM_MAP.NAME'), {
+        target: { value: ' Map 2027 ' },
+      });
+      fireEvent.change(screen.getByLabelText('FARM_MAP.ROW_PLANNER.FARM_MAP.SEASON'), {
+        target: { value: '2027' },
+      });
+      fireEvent.click(publish);
+      expect(h.onPublishMap).toHaveBeenCalledWith({ name: 'Map 2027', season: '2027' });
+    });
+    it('needs a second press to retire the map', () => {
+      const h = setup({ ...mapHandlers(), farmMap: map });
+      fireEvent.click(screen.getByText('FARM_MAP.ROW_PLANNER.FARM_MAP.RETIRE'));
+      expect(h.onRetireMap).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByText('FARM_MAP.ROW_PLANNER.FARM_MAP.CONFIRM_RETIRE'));
+      expect(h.onRetireMap).toHaveBeenCalledTimes(1);
+    });
+    it('blocks saving a plan for a field in the published map and says why', () => {
+      setup({ ...mapHandlers(), farmMap: map, fieldLocked: true, hasPlan: true });
+      expect(screen.getByText(/FIELD_LOCKED.*Map 2027/)).toBeTruthy();
+      expect((screen.getByText('FARM_MAP.ROW_PLANNER.SAVE') as HTMLButtonElement).disabled).toBe(
+        true,
+      );
+    });
+  });
 });
+
+describe('docks and routes', () => {
+  const dock = {
+    kind: 'dock',
+    name: 'dock',
+    points: [{ lat: 1, lng: 2 }],
+    heading_deg: 90,
+  };
+  const route = {
+    kind: 'route',
+    name: 'route1',
+    from_node: 'dock',
+    to_node: 'F1R0N0',
+    points: [
+      { lat: 1, lng: 2 },
+      { lat: 1.1, lng: 2.1 },
+      { lat: 1.2, lng: 2.2 },
+    ],
+  };
+  const feature = 'FARM_MAP.ROW_PLANNER.FEATURES.';
+
+  it('lists docks and routes and can remove one or set a heading', () => {
+    const { onRemoveFeature, onDockHeading } = setup({
+      mapFeatures: [dock, route],
+      onRemoveFeature: vi.fn(),
+      onDockHeading: vi.fn(),
+    });
+    expect(screen.getByText(new RegExp(`${feature}DOCK .*"dock"`))).toBeTruthy();
+    expect(screen.getByText(new RegExp(`${feature}ROUTE .*"count":1`))).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', { name: new RegExp(`${feature}REMOVE .*"route1"`) }),
+    );
+    expect(onRemoveFeature).toHaveBeenCalledWith('route1');
+    fireEvent.change(screen.getByRole('spinbutton', { name: new RegExp(`${feature}HEADING`) }), {
+      target: { value: '180' },
+    });
+    expect(onDockHeading).toHaveBeenCalledWith('dock', '180');
+  });
+
+  it('starts a dock or a route from the add buttons', () => {
+    const { onAddDock, onAddRoute } = setup({ onAddDock: vi.fn(), onAddRoute: vi.fn() });
+    expect(screen.getByText(`${feature}NONE`)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: `${feature}ADD_DOCK` }));
+    fireEvent.click(screen.getByRole('button', { name: `${feature}ADD_ROUTE` }));
+    expect(onAddDock).toHaveBeenCalledTimes(1);
+    expect(onAddRoute).toHaveBeenCalledTimes(1);
+  });
+
+  it('while placing a route, finishing needs two points and the add buttons are hidden', () => {
+    const { onFinishRoute, onCancelPlacing } = setup({
+      featurePlacing: 'route',
+      routePointCount: 1,
+      onFinishRoute: vi.fn(),
+      onCancelPlacing: vi.fn(),
+    });
+    expect(screen.queryByRole('button', { name: `${feature}ADD_DOCK` })).toBeNull();
+    const finish = screen.getByRole('button', { name: `${feature}FINISH_ROUTE` });
+    expect((finish as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: `${feature}CANCEL` }));
+    expect(onCancelPlacing).toHaveBeenCalledTimes(1);
+    expect(onFinishRoute).not.toHaveBeenCalled();
+  });
+
+  it('shows why a route was refused', () => {
+    setup({ featurePlacing: 'route', routePointCount: 2, featureErrorKey: 'START' });
+    expect(screen.getByRole('alert').textContent).toBe(`${feature}ERRORS.START`);
+  });
+});
+

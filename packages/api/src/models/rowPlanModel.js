@@ -37,6 +37,7 @@ class RowPlanModel extends BaseModel {
         map_id: { type: ['string', 'null'], maxLength: 100 },
         map_hash: { type: ['string', 'null'], maxLength: 64 },
         inputs_hash: { type: ['string', 'null'], maxLength: 64 },
+        field_number: { type: 'integer', minimum: 1 },
         schema_version: { type: 'integer' },
         generator: { type: ['string', 'null'] },
         origin: { type: ['object', 'null'] },

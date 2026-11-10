@@ -31,7 +31,7 @@ if (process.env.SENTRY_DSN && environment !== 'development') {
       // Automatically instrument Node.js libraries and frameworks
       ...Sentry.autoDiscoverNodePerformanceMonitoringIntegrations(),
     ],
-    release: '3.13.4',
+    release: '3.13.5',
     // Set tracesSampleRate to 1.0 to capture 100%
     // of transactions for performance monitoring.
     // We recommend adjusting this value in production
@@ -167,6 +167,7 @@ import farmTokenRoute from './routes/farmTokenRoute.js';
 import documentRoute from './routes/documentRoute.js';
 import taskRoute from './routes/taskRoute.js';
 import rowPlanRoute from './routes/rowPlanRoute.js';
+import farmMapRoute from './routes/farmMapRoute.js';
 import productRoute from './routes/productRoute.js';
 import notificationUserRoute from './routes/notificationUserRoute.js';
 import timeNotificationRoute from './routes/timeNotificationRoute.js';
@@ -240,12 +241,14 @@ app.set('json replacer', (key: string, value: string) => {
   return value;
 });
 
-// Apply default express.json() request size limit to all routes except sensor webhook
+const SOIL_LAB_RESULT_PATH = /^\/dashboard\/soil_lab_results(\/|$)/;
+
 // Row plan imports carry a GeoJSON file of up to 5MB (see MAX_BYTES in util/rowPlan.js). Their larger
 // limit is applied after checkJwt, so unauthenticated requests never get it.
 const applyExpressJSON: RequestHandler = (req, res, next) => {
   if (req.path.startsWith('/row_plan')) return next();
-  const jsonMiddleware = express.json({ limit: '100kB' });
+  const limit = SOIL_LAB_RESULT_PATH.test(req.path) ? '256kB' : '100kB';
+  const jsonMiddleware = express.json({ limit });
   jsonMiddleware(req, res, next);
 };
 
@@ -363,6 +366,7 @@ app
   .use('/document', documentRoute)
   .use('/task', taskRoute)
   .use('/row_plan', express.json({ limit: '5MB' }), rowPlanRoute)
+  .use('/farm_map', farmMapRoute)
   .use('/product', productRoute)
   .use('/nomination', nominationRoutes)
   .use('/notification_user', notificationUserRoute)

@@ -66,6 +66,29 @@ export const lineLengthMetres = (points) =>
   points.slice(1).reduce((sum, p, i) => sum + distanceMetres(points[i], p), 0);
 
 /**
+ * Names for rows and nodes: F<field>R<row>N<node>, for example F1R12N3 is node 3 of row 12 in field 1.
+ * Nodes are numbered from 0 along each row. A row split by an obstacle keeps counting through its fragments
+ * in fragment order, so every node name in a field is unique.
+ */
+export const rowName = (fieldNumber, rowNumber) => `F${fieldNumber}R${rowNumber}`;
+export const nodeName = (fieldNumber, rowNumber, node) =>
+  `${rowName(fieldNumber, rowNumber)}N${node}`;
+
+/** Map of `${row_number}/${frag}` to the number of the fragment's first node. */
+export const nodeStarts = (rows) => {
+  const starts = new Map();
+  const used = new Map();
+  [...rows]
+    .sort((a, b) => a.row_number - b.row_number || a.frag - b.frag)
+    .forEach((r) => {
+      const start = used.get(r.row_number) ?? 0;
+      starts.set(`${r.row_number}/${r.frag}`, start);
+      used.set(r.row_number, start + r.line_points.length);
+    });
+  return starts;
+};
+
+/**
  * Parse and validate a rows.geojson document (object or JSON text).
  * Returns { properties, rows } where rows are in mission order:
  *   { row_number, frag, position, line_points: [{ lat, lng }], length }
@@ -90,6 +113,9 @@ export const parseRowPlanGeoJSON = (input) => {
   }
   if (props.version !== SCHEMA_VERSION) {
     throw new RowPlanError(`unsupported plan version ${JSON.stringify(props.version)}`);
+  }
+  if (Array.isArray(props.fields)) {
+    throw new RowPlanError('this file holds more than one field: import one field at a time');
   }
   if (!Array.isArray(props.origin) || props.origin.length !== 2) {
     throw new RowPlanError('origin must be [lat, lon]');
@@ -139,8 +165,15 @@ export const parseRowPlanGeoJSON = (input) => {
 
   const rows = [];
   const seen = new Set();
+  const fieldsInFile = new Set();
   (Array.isArray(doc.features) ? doc.features : []).forEach((feature, i) => {
     if (feature?.properties?.role !== 'row') return;
+    // Names such as F1R12 are generated on export. The field number in a file is not trusted on import: the
+    // server numbers the field. A file that mixes fields cannot be one field's plan.
+    if (feature.properties.field != null) fieldsInFile.add(feature.properties.field);
+    if (fieldsInFile.size > 1) {
+      throw new RowPlanError('this file holds more than one field: import one field at a time');
+    }
     const geometry = feature.geometry;
     if (geometry?.type !== 'LineString')
       throw new RowPlanError(`feature ${i}: row is not a LineString`);
@@ -223,6 +256,165 @@ export const canonicalRowsText = (rows) =>
 export const computeMapHash = (rows) =>
   createHash('sha256').update(canonicalRowsText(rows), 'utf8').digest('hex');
 
+/**
+ * Canonical text of a farm map: the canonical rows of every field, ordered by field number:
+ *   [[field_number,<canonical rows>],...]
+ * Row names come from the field number and row number, so the hash covers the names a robot will use.
+ * entries: [{ field_number, rows }]
+ */
+export const canonicalFarmMapText = (entries, features = []) => {
+  const text = `[${[...entries]
+    .sort((a, b) => a.field_number - b.field_number)
+    .map((e) => `[${e.field_number},${canonicalRowsText(e.rows)}]`)
+    .join(',')}]`;
+  return features.length ? `${text};${canonicalFeaturesText(features)}` : text;
+};
+
+/**
+ * Canonical text of a map's docks and routes, docks first, then routes, each in name order:
+ *   [["dock","dock1",<heading or null>,<from or null>,<to or null>,[[lon,lat],...]],...]
+ * Names are ASCII with no quotes or backslashes, so a string is written as "name" with no escaping.
+ * A map with no docks or routes adds nothing to the farm map text, so its hash is the same as it was before
+ * docks existed. features: [{ kind, name, points: [{ lat, lng }], heading_deg, from_node, to_node }]
+ */
+export const canonicalFeaturesText = (features) => {
+  const text = (value) => (value == null ? 'null' : `"${value}"`);
+  const order = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+  return `[${[...features]
+    .sort((a, b) => order(a.kind, b.kind) || order(a.name, b.name))
+    .map((f) => {
+      const points = f.points.map((p) => `[${formatCoordinate(p.lng)},${formatCoordinate(p.lat)}]`);
+      return `["${f.kind}","${f.name}",${f.heading_deg ?? 'null'},${text(f.from_node)},${text(f.to_node)},[${points.join(',')}]]`;
+    })
+    .join(',')}]`;
+};
+
+/**
+ * SHA-256 of the canonical farm map text, lower-case hex. Covers geometry, order and field numbers, and the docks
+ * and routes if there are any. It does not cover the names of fields.
+ */
+export const computeFarmMapHash = (entries, features = []) =>
+  createHash('sha256').update(canonicalFarmMapText(entries, features), 'utf8').digest('hex');
+
+export const MAX_FEATURES = 100;
+export const MAX_ROUTE_POINTS = 500;
+// How far the end of a route may sit from the node it is named as joining.
+export const ROUTE_END_TOLERANCE_M = 10;
+
+const FEATURE_NAME_PATTERN = /^[a-z][a-z0-9_]{0,31}$/;
+// What a robot recognises a dock by: dock, dock1, dock2, ...
+const DOCK_NAME_PATTERN = /^dock[0-9]*$/;
+
+/** Row nodes of a set of fields: Map of node name to { lat, lng }. entries: [{ field_number, rows }]. */
+const rowNodes = (entries) => {
+  const nodes = new Map();
+  for (const { field_number, rows } of entries) {
+    const starts = nodeStarts(rows);
+    for (const r of rows) {
+      const start = starts.get(`${r.row_number}/${r.frag}`);
+      r.line_points.forEach((p, i) =>
+        nodes.set(nodeName(field_number, r.row_number, start + i), p),
+      );
+    }
+  }
+  return nodes;
+};
+
+/**
+ * Check docks and routes given for a draft map and return them in the stored shape.
+ * A dock is one point named dock, dock1, ... with an optional heading. A route is a line of two or more points,
+ * the first and last joining two nodes (a dock or a row node of the map's plans) and any others being waypoints.
+ * Each end must lie within ROUTE_END_TOLERANCE_M of the node it names. Throws RowPlanError with a reason.
+ * entries: [{ field_number, rows }] of the map's plans. Pass null to check the shape only.
+ */
+export const validateFarmMapFeatures = (input, entries = null) => {
+  if (!Array.isArray(input)) throw new RowPlanError('features must be a list');
+  if (input.length > MAX_FEATURES) throw new RowPlanError(`more than ${MAX_FEATURES} features`);
+  const seen = new Set();
+  const features = input.map((f, i) => {
+    const what = `feature ${i}`;
+    if (!f || typeof f !== 'object') throw new RowPlanError(`${what}: must be an object`);
+    const { kind, name, points } = f;
+    if (kind !== 'dock' && kind !== 'route') {
+      throw new RowPlanError(`${what}: kind must be dock or route`);
+    }
+    if (typeof name !== 'string' || !FEATURE_NAME_PATTERN.test(name)) {
+      throw new RowPlanError(
+        `${what}: name must be lower case letters, digits and _, starting with a letter, up to 32 characters`,
+      );
+    }
+    if (kind === 'dock' && !DOCK_NAME_PATTERN.test(name)) {
+      throw new RowPlanError(`${what}: a dock is named dock, dock1, dock2, ...`);
+    }
+    if (kind === 'route' && DOCK_NAME_PATTERN.test(name)) {
+      throw new RowPlanError(`${what}: a route cannot be named like a dock`);
+    }
+    if (seen.has(name)) throw new RowPlanError(`${what}: the name ${name} is used twice`);
+    seen.add(name);
+    const [min, max] = kind === 'dock' ? [1, 1] : [2, MAX_ROUTE_POINTS];
+    if (!Array.isArray(points) || points.length < min || points.length > max) {
+      throw new RowPlanError(
+        kind === 'dock'
+          ? `${what}: a dock is one point`
+          : `${what}: a route is ${min} to ${max} points`,
+      );
+    }
+    points.forEach((p, j) => checkLatLng(p?.lat, p?.lng, `${what}: point ${j}`));
+    let heading_deg = null;
+    let from_node = null;
+    let to_node = null;
+    if (kind === 'dock') {
+      heading_deg = f.heading_deg ?? null;
+      if (
+        heading_deg !== null &&
+        !(Number.isInteger(heading_deg) && heading_deg >= 0 && heading_deg < 360)
+      ) {
+        throw new RowPlanError(`${what}: heading_deg must be a whole number from 0 to 359`);
+      }
+      if (f.from_node != null || f.to_node != null) {
+        throw new RowPlanError(`${what}: a dock has no from_node or to_node`);
+      }
+    } else {
+      if (f.heading_deg != null) throw new RowPlanError(`${what}: a route has no heading_deg`);
+      ({ from_node, to_node } = f);
+      if (typeof from_node !== 'string' || typeof to_node !== 'string' || from_node === to_node) {
+        throw new RowPlanError(`${what}: a route needs a from_node and a different to_node`);
+      }
+    }
+    return {
+      kind,
+      name,
+      points: points.map(({ lat, lng }) => ({ lat, lng })),
+      heading_deg,
+      from_node,
+      to_node,
+    };
+  });
+  if (entries) checkRouteEnds(features, entries);
+  return features;
+};
+
+/** Every route must start and end at a node that exists, and be drawn to it. Used when saving and at publish. */
+export const checkRouteEnds = (features, entries) => {
+  const nodes = rowNodes(entries);
+  for (const f of features) if (f.kind === 'dock') nodes.set(f.name, f.points[0]);
+  for (const f of features) {
+    if (f.kind !== 'route') continue;
+    for (const [node, end, which] of [
+      [f.from_node, f.points[0], 'start'],
+      [f.to_node, f.points[f.points.length - 1], 'end'],
+    ]) {
+      const at = nodes.get(node);
+      if (!at) throw new RowPlanError(`route ${f.name}: ${node} is not a dock or a row node`);
+      if (distanceMetres(at, end) > ROUTE_END_TOLERANCE_M) {
+        throw new RowPlanError(
+          `route ${f.name}: its ${which} is more than ${ROUTE_END_TOLERANCE_M} m from ${node}`,
+        );
+      }
+    }
+  }
+};
+
 // Local planar projection in metres, good enough for a field.
 const projector = (origin) => {
   const kLat = (Math.PI / 180) * EARTH_RADIUS_M;
@@ -294,12 +486,7 @@ export const parseRowSpec = (text) => {
   return [...numbers].sort((a, b) => a - b);
 };
 
-/**
- * Build the export document.
- * plan: row_plan record; rows: field_row records; fieldRing: [{ lat, lng }] or null.
- * Coordinates are written exactly as stored, so a robot plan keeps its map_hash on re-import.
- */
-export const buildRowPlanGeoJSON = (plan, rows, fieldRing = null) => {
+const planProperties = (plan) => {
   const origin = plan.origin ?? {};
   const params = plan.params ?? {};
   const properties = {
@@ -317,30 +504,162 @@ export const buildRowPlanGeoJSON = (plan, rows, fieldRing = null) => {
   if (plan.supersedes_map_id) properties.supersedes = plan.supersedes_map_id;
   properties.field_location_id = plan.location_id;
   properties.row_plan_id = plan.row_plan_id;
+  properties.field_number = plan.field_number;
+  return properties;
+};
 
-  const features = [];
-  if (Array.isArray(fieldRing) && fieldRing.length >= 3) {
-    const ring = fieldRing.map((p) => [p.lng, p.lat]);
-    features.push({
-      type: 'Feature',
-      properties: { role: 'field' },
-      geometry: { type: 'Polygon', coordinates: [[...ring, ring[0]]] },
-    });
-  }
-  [...rows]
+const fieldFeature = (ring, properties) => {
+  const closed = ring.map((p) => [p.lng, p.lat]);
+  return {
+    type: 'Feature',
+    properties: { role: 'field', ...properties },
+    geometry: { type: 'Polygon', coordinates: [[...closed, closed[0]]] },
+  };
+};
+
+const rowFeatures = (plan, rows, extra = {}) => {
+  const starts = nodeStarts(rows);
+  return [...rows]
     .sort((a, b) => a.position - b.position)
-    .forEach((r) => {
-      features.push({
+    .map((r) => {
+      const start = starts.get(`${r.row_number}/${r.frag}`);
+      return {
         type: 'Feature',
         properties: {
           role: 'row',
           row: r.row_number,
           frag: r.frag,
           row_id: r.row_id,
+          name: rowName(plan.field_number, r.row_number),
+          field: plan.field_number,
+          location_id: plan.location_id,
+          ...extra,
+          node_start: start,
+          node_names: r.line_points.map((_, i) =>
+            nodeName(plan.field_number, r.row_number, start + i),
+          ),
           length_m: Number(r.length),
         },
         geometry: { type: 'LineString', coordinates: r.line_points.map((p) => [p.lng, p.lat]) },
-      });
+      };
     });
-  return { type: 'FeatureCollection', properties, features };
+};
+
+/**
+ * Docks as Points and routes as LineStrings. A route's node_names has one name per point: the first and last are
+ * the nodes it joins, the points between are waypoints named <route>_<point>.
+ */
+const dockAndRouteFeatures = (mapFeatures, extra = {}) =>
+  [...mapFeatures]
+    .sort((a, b) => (a.kind === b.kind ? (a.name < b.name ? -1 : 1) : a.kind < b.kind ? -1 : 1))
+    .map((f) =>
+      f.kind === 'dock'
+        ? {
+            type: 'Feature',
+            properties: {
+              role: 'dock',
+              name: f.name,
+              heading_deg: f.heading_deg ?? null,
+              ...extra,
+            },
+            geometry: { type: 'Point', coordinates: [f.points[0].lng, f.points[0].lat] },
+          }
+        : {
+            type: 'Feature',
+            properties: {
+              role: 'route',
+              name: f.name,
+              from_node: f.from_node,
+              to_node: f.to_node,
+              ...extra,
+              node_names: f.points.map((_, i) =>
+                i === 0 ? f.from_node : i === f.points.length - 1 ? f.to_node : `${f.name}_${i}`,
+              ),
+              length_m: Number(lineLengthMetres(f.points).toFixed(2)),
+            },
+            geometry: { type: 'LineString', coordinates: f.points.map((p) => [p.lng, p.lat]) },
+          },
+    );
+
+/**
+ * Build the export document for one plan.
+ * plan: row_plan record; rows: field_row records; fieldRing: [{ lat, lng }] or null.
+ * Coordinates are written exactly as stored, so a robot plan keeps its map_hash on re-import.
+ * Rows are named F<field>R<row> and each carries node_names F<field>R<row>N<node>.
+ */
+export const buildRowPlanGeoJSON = (plan, rows, fieldRing = null) => {
+  const features = [];
+  if (Array.isArray(fieldRing) && fieldRing.length >= 3) {
+    features.push(fieldFeature(fieldRing, { field: plan.field_number }));
+  }
+  features.push(...rowFeatures(plan, rows));
+  return { type: 'FeatureCollection', properties: planProperties(plan), features };
+};
+
+/**
+ * Build one document holding the current plan of every field, for export from the farm map.
+ * entries: [{ plan, rows, name, ring }] where name is the field's name and ring its outline ([{ lat, lng }] or null).
+ * The top-level properties list the fields; a file like this is not one field's plan, so it cannot be imported back.
+ * numbering: { fieldNumbers: { [location_id]: number } for every field ever planned, nextFieldNumber }. Without it
+ * both come from the entries.
+ * farmMap: the farm_map record of a published or retired map. The document then names the map (farm_map_id,
+ * farm_map_version, content_hash, ...) and each row carries its farm_map_id.
+ */
+export const buildFarmRowPlanGeoJSON = (
+  entries,
+  numbering = {},
+  farmMap = null,
+  mapFeatures = [],
+) => {
+  const rowExtra = farmMap ? { farm_map_id: farmMap.farm_map_id } : {};
+  const sorted = [...entries].sort((a, b) => a.plan.field_number - b.plan.field_number);
+  const features = [];
+  const fields = sorted.map(({ plan, rows, name, ring }) => {
+    if (Array.isArray(ring) && ring.length >= 3) {
+      features.push(
+        fieldFeature(ring, {
+          field: plan.field_number,
+          location_id: plan.location_id,
+          field_name: name ?? null,
+        }),
+      );
+    }
+    features.push(...rowFeatures(plan, rows, rowExtra));
+    const { version, ...summary } = planProperties(plan);
+    return {
+      ...summary,
+      field_name: name ?? null,
+      row_count: new Set(rows.map((r) => r.row_number)).size,
+    };
+  });
+  features.push(...dockAndRouteFeatures(mapFeatures, rowExtra));
+  const fieldNumbers =
+    numbering.fieldNumbers ??
+    Object.fromEntries(sorted.map(({ plan }) => [plan.location_id, plan.field_number]));
+  const nextFieldNumber =
+    numbering.nextFieldNumber ?? Math.max(0, ...Object.values(fieldNumbers)) + 1;
+  return {
+    type: 'FeatureCollection',
+    properties: {
+      version: SCHEMA_VERSION,
+      generator: 'litefarm',
+      multi_field: true,
+      ...(farmMap
+        ? {
+            farm_map_id: farmMap.farm_map_id,
+            farm_map_version: farmMap.version,
+            farm_map_name: farmMap.name,
+            season: farmMap.season ?? null,
+            status: farmMap.status,
+            previous_farm_map_id: farmMap.previous_farm_map_id ?? null,
+            content_hash: farmMap.content_hash,
+            published_at: farmMap.published_at,
+          }
+        : {}),
+      fields,
+      field_numbers: fieldNumbers,
+      next_field_number: nextFieldNumber,
+    },
+    features,
+  };
 };

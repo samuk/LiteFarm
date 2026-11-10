@@ -17,14 +17,23 @@ import express from 'express';
 import rowPlanController from '../controllers/rowPlanController.js';
 import checkScope from '../middleware/acl/checkScope.js';
 import hasFarmAccess from '../middleware/acl/hasFarmAccess.js';
+import apiRateLimiter from '../middleware/rateLimiter.js';
 
 const router = express.Router();
+router.use(apiRateLimiter);
 
 router.post(
   '/import',
   hasFarmAccess({ body: 'location_id' }),
   checkScope(['edit:row_plan']),
   rowPlanController.importRowPlan(),
+);
+
+router.get(
+  '/farm/:farm_id/geojson',
+  hasFarmAccess({ params: 'farm_id' }),
+  checkScope(['get:row_plan']),
+  rowPlanController.exportFarmRowPlans(),
 );
 
 router.get(

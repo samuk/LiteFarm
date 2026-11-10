@@ -40,9 +40,32 @@ export default function RowPlannerControl({
   onClear,
   onDownload,
   onSave,
+  onDownloadAll,
+  hasSavedPlans,
+  fieldNumber,
+  farmMap,
+  fieldLocked,
+  isMapBusy,
+  mapErrorMessage,
+  onPublishMap,
+  onRetireMap,
+  onDownloadMap,
+  mapFeatures = [],
+  featurePlacing = null,
+  routePointCount = 0,
+  featureErrorKey = null,
+  onAddDock,
+  onAddRoute,
+  onFinishRoute,
+  onCancelPlacing,
+  onRemoveFeature,
+  onDockHeading,
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [mapName, setMapName] = useState('');
+  const [mapSeason, setMapSeason] = useState('');
+  const [confirmRetire, setConfirmRetire] = useState(false);
   const prefix = 'FARM_MAP.ROW_PLANNER.';
   const set = (key, value) => onSettingsChange({ ...settings, [key]: value });
 
@@ -90,6 +113,14 @@ export default function RowPlannerControl({
                   ))}
                 </select>
               </label>
+              {fieldNumber !== undefined && (
+                <p className={styles.note}>{t(prefix + 'FIELD_NAMING', { field: fieldNumber })}</p>
+              )}
+              {fieldLocked && (
+                <p className={styles.note} role="status">
+                  {t(prefix + 'FIELD_LOCKED', { name: farmMap?.name, version: farmMap?.version })}
+                </p>
+              )}
               {numberInput('toolWidth', 'TOOL_WIDTH', { min: 0.5, step: 0.5 })}
               {!settings.contour && numberInput('angle', 'ANGLE', { step: 5 })}
               {numberInput('headland', 'HEADLAND', { min: 0, step: 1 })}
@@ -153,7 +184,15 @@ export default function RowPlannerControl({
                 <button
                   type="button"
                   className={styles.button}
-                  disabled={isBusy || isSaving || isSaved || !hasPlan}
+                  disabled={isBusy || !hasSavedPlans}
+                  onClick={onDownloadAll}
+                >
+                  {t(prefix + 'DOWNLOAD_ALL')}
+                </button>
+                <button
+                  type="button"
+                  className={styles.button}
+                  disabled={isBusy || isSaving || isSaved || !hasPlan || fieldLocked}
                   onClick={onSave}
                 >
                   {isSaving
@@ -210,6 +249,193 @@ export default function RowPlannerControl({
                 </p>
               )}
               <p className={styles.note}>{t(prefix + 'NOTE')}</p>
+              <div className={styles.section} data-cy="farm-map-section">
+                <h3 className={styles.heading}>{t(prefix + 'FARM_MAP.TITLE')}</h3>
+                <p className={styles.result}>
+                  {farmMap
+                    ? t(prefix + 'FARM_MAP.PUBLISHED', {
+                        name: farmMap.name,
+                        version: farmMap.version,
+                        season: farmMap.season ?? '',
+                        count: farmMap.plans?.length ?? 0,
+                      })
+                    : t(prefix + 'FARM_MAP.NONE')}
+                </p>
+                <div className={styles.features} data-cy="farm-map-features">
+                  <h4 className={styles.heading}>{t(prefix + 'FEATURES.TITLE')}</h4>
+                  {mapFeatures.length === 0 ? (
+                    <p className={styles.note}>{t(prefix + 'FEATURES.NONE')}</p>
+                  ) : (
+                    <ul className={styles.featureList}>
+                      {mapFeatures.map((feature) => (
+                        <li key={feature.name} className={styles.featureItem}>
+                          <span>
+                            {feature.kind === 'dock'
+                              ? t(prefix + 'FEATURES.DOCK', { name: feature.name })
+                              : t(prefix + 'FEATURES.ROUTE', {
+                                  name: feature.name,
+                                  from: feature.from_node,
+                                  to: feature.to_node,
+                                  count: Math.max(0, feature.points.length - 2),
+                                })}
+                          </span>
+                          {feature.kind === 'dock' && (
+                            <input
+                              type="number"
+                              min={0}
+                              max={359}
+                              step={1}
+                              className={styles.heading_input}
+                              aria-label={t(prefix + 'FEATURES.HEADING', { name: feature.name })}
+                              value={feature.heading_deg ?? ''}
+                              disabled={isMapBusy}
+                              onChange={(event) => onDockHeading?.(feature.name, event.target.value)}
+                            />
+                          )}
+                          <button
+                            type="button"
+                            className={styles.button}
+                            aria-label={t(prefix + 'FEATURES.REMOVE', { name: feature.name })}
+                            disabled={isMapBusy}
+                            onClick={() => onRemoveFeature?.(feature.name)}
+                          >
+                            {t(prefix + 'FEATURES.REMOVE_SHORT')}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {featurePlacing === 'dock' && (
+                    <p className={styles.result} role="status">
+                      {t(prefix + 'FEATURES.PLACING_DOCK')}
+                    </p>
+                  )}
+                  {featurePlacing === 'route' && (
+                    <p className={styles.result} role="status">
+                      {t(prefix + 'FEATURES.PLACING_ROUTE', { count: routePointCount })}
+                    </p>
+                  )}
+                  {featureErrorKey && (
+                    <p className={styles.error} role="alert">
+                      {t(prefix + 'FEATURES.ERRORS.' + featureErrorKey)}
+                    </p>
+                  )}
+                  <div className={styles.actions}>
+                    {!featurePlacing && (
+                      <>
+                        <button
+                          type="button"
+                          className={styles.button}
+                          disabled={isMapBusy}
+                          onClick={onAddDock}
+                        >
+                          {t(prefix + 'FEATURES.ADD_DOCK')}
+                        </button>
+                        <button
+                          type="button"
+                          className={styles.button}
+                          disabled={isMapBusy}
+                          onClick={onAddRoute}
+                        >
+                          {t(prefix + 'FEATURES.ADD_ROUTE')}
+                        </button>
+                      </>
+                    )}
+                    {featurePlacing === 'route' && (
+                      <button
+                        type="button"
+                        className={styles.button}
+                        disabled={routePointCount < 2}
+                        onClick={onFinishRoute}
+                      >
+                        {t(prefix + 'FEATURES.FINISH_ROUTE')}
+                      </button>
+                    )}
+                    {featurePlacing && (
+                      <button type="button" className={styles.button} onClick={onCancelPlacing}>
+                        {t(prefix + 'FEATURES.CANCEL')}
+                      </button>
+                    )}
+                  </div>
+                  <p className={styles.note}>{t(prefix + 'FEATURES.NOTE')}</p>
+                </div>
+                <label className={styles.field}>
+                  {t(prefix + 'FARM_MAP.NAME')}
+                  <input
+                    type="text"
+                    value={mapName}
+                    maxLength={255}
+                    disabled={isMapBusy}
+                    onChange={(event) => setMapName(event.target.value)}
+                  />
+                </label>
+                <label className={styles.field}>
+                  {t(prefix + 'FARM_MAP.SEASON')}
+                  <input
+                    type="text"
+                    value={mapSeason}
+                    maxLength={100}
+                    disabled={isMapBusy}
+                    onChange={(event) => setMapSeason(event.target.value)}
+                  />
+                </label>
+                <div className={styles.actions}>
+                  <button
+                    type="button"
+                    className={styles.button}
+                    disabled={isBusy || isMapBusy || !hasSavedPlans || !mapName.trim()}
+                    onClick={() => onPublishMap({ name: mapName.trim(), season: mapSeason.trim() })}
+                  >
+                    {isMapBusy ? t(prefix + 'FARM_MAP.PUBLISHING') : t(prefix + 'FARM_MAP.PUBLISH')}
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.button}
+                    disabled={isMapBusy || !farmMap}
+                    onClick={onDownloadMap}
+                  >
+                    {t(prefix + 'FARM_MAP.DOWNLOAD')}
+                  </button>
+                  {farmMap && !confirmRetire && (
+                    <button
+                      type="button"
+                      className={styles.button}
+                      disabled={isMapBusy}
+                      onClick={() => setConfirmRetire(true)}
+                    >
+                      {t(prefix + 'FARM_MAP.RETIRE')}
+                    </button>
+                  )}
+                  {farmMap && confirmRetire && (
+                    <>
+                      <button
+                        type="button"
+                        className={styles.button}
+                        disabled={isMapBusy}
+                        onClick={() => {
+                          setConfirmRetire(false);
+                          onRetireMap();
+                        }}
+                      >
+                        {t(prefix + 'FARM_MAP.CONFIRM_RETIRE')}
+                      </button>
+                      <button
+                        type="button"
+                        className={styles.button}
+                        onClick={() => setConfirmRetire(false)}
+                      >
+                        {t(prefix + 'FARM_MAP.CANCEL')}
+                      </button>
+                    </>
+                  )}
+                </div>
+                {mapErrorMessage && (
+                  <p className={styles.error} role="alert">
+                    {t(prefix + 'FARM_MAP.FAILED', { message: mapErrorMessage })}
+                  </p>
+                )}
+                <p className={styles.note}>{t(prefix + 'FARM_MAP.NOTE')}</p>
+              </div>
             </>
           )}
         </div>
@@ -242,4 +468,35 @@ RowPlannerControl.propTypes = {
   onClear: PropTypes.func.isRequired,
   onDownload: PropTypes.func.isRequired,
   onSave: PropTypes.func.isRequired,
+  onDownloadAll: PropTypes.func,
+  hasSavedPlans: PropTypes.bool,
+  fieldNumber: PropTypes.number,
+  farmMap: PropTypes.shape({
+    name: PropTypes.string,
+    version: PropTypes.number,
+    season: PropTypes.string,
+    plans: PropTypes.array,
+  }),
+  fieldLocked: PropTypes.bool,
+  isMapBusy: PropTypes.bool,
+  mapErrorMessage: PropTypes.string,
+  onPublishMap: PropTypes.func,
+  onRetireMap: PropTypes.func,
+  onDownloadMap: PropTypes.func,
+  mapFeatures: PropTypes.arrayOf(
+    PropTypes.shape({
+      kind: PropTypes.oneOf(['dock', 'route']).isRequired,
+      name: PropTypes.string.isRequired,
+      points: PropTypes.array.isRequired,
+    }),
+  ),
+  featurePlacing: PropTypes.oneOf(['dock', 'route']),
+  routePointCount: PropTypes.number,
+  featureErrorKey: PropTypes.string,
+  onAddDock: PropTypes.func,
+  onAddRoute: PropTypes.func,
+  onFinishRoute: PropTypes.func,
+  onCancelPlacing: PropTypes.func,
+  onRemoveFeature: PropTypes.func,
+  onDockHeading: PropTypes.func,
 };

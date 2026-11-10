@@ -23,7 +23,9 @@ import {
   DEFAULT_PLAN_SETTINGS,
   findObstacles,
   listPlannableAreas,
+  nodeName,
   planToFeatureCollection,
+  rowName,
   summarisePlan,
   validateSettings,
 } from '../util/rowPlanner';
@@ -201,6 +203,25 @@ describe('plan output', () => {
     expect(features).toHaveLength(3);
     expect(features[0].geometry.coordinates[0]).toEqual([-2, 51]);
     expect(features.map((f) => f.properties.role)).toEqual(['row', 'row', 'path']);
+  });
+  it('names rows and nodes by field, row and node', () => {
+    expect(rowName(1, 12)).toBe('F1R12');
+    expect(nodeName(2, 0, 7)).toBe('F2R0N7');
+  });
+  it('gives each row a name and its first node number when a field number is given', () => {
+    const rows = planToFeatureCollection(result, 3).features.filter(
+      (f) => f.properties.role === 'row',
+    );
+    expect(rows.map((f) => f.properties.name)).toEqual(['F3R0', 'F3R1']);
+    expect(rows.map((f) => f.properties.node_start)).toEqual([0, 0]);
+    expect(planToFeatureCollection(result).features[0].properties.name).toBeUndefined();
+  });
+  it('lists node names and the field number in a named download', () => {
+    const request = buildPlanRequest([[51, -2], [51, -1.9], [51.1, -1.9]], [], DEFAULT_PLAN_SETTINGS);
+    const geojson = buildDownloadGeoJSON(request, result, 2);
+    const row = geojson.features.find((f: any) => f.properties.role === 'row') as any;
+    expect(geojson.properties.field_number).toBe(2);
+    expect(row.properties.node_names).toEqual(['F2R0N0', 'F2R0N1']);
   });
   it('returns an empty collection for no plan', () => {
     expect(planToFeatureCollection(null).features).toEqual([]);
